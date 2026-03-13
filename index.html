@@ -1,0 +1,1959 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Command Center</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #161818; font-family: 'DM Sans', 'Segoe UI', system-ui, sans-serif; color: #e4e0db; }
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useCallback, useRef } = React;
+
+const TAG_COLORS = [
+  { color: "#cc8450", bg: "#cc845010" },
+  { color: "#5a9ea8", bg: "#5a9ea810" },
+  { color: "#8a80b8", bg: "#8a80b810" },
+  { color: "#7aab6a", bg: "#7aab6a10" },
+  { color: "#b86880", bg: "#b8688010" },
+  { color: "#baa048", bg: "#baa04810" },
+];
+
+const STATES = ["TODO", "WIP", "STANDBY", "DONE"];
+const STATE_LABELS = { TODO: "todo", WIP: "wip", STANDBY: "stand by", DONE: "done" };
+const STATE_COLORS = {
+  TODO: "#8a8580",
+  WIP: "#d4a84a",
+  STANDBY: "#c47048",
+  DONE: "#7aab6a",
+};
+
+const generateId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+
+// ---- Storage helpers (localStorage) ----
+function loadTasks() {
+  try { const r = localStorage.getItem("producer-tasks"); return r ? JSON.parse(r) : []; }
+  catch { return []; }
+}
+
+function saveTasks(tasks) {
+  try { localStorage.setItem("producer-tasks", JSON.stringify(tasks)); }
+  catch (e) { console.error("Save error:", e); }
+}
+
+const DEFAULT_PRIORITIES = [
+  { id: 1, text: "" },
+  { id: 2, text: "" },
+  { id: 3, text: "" },
+];
+
+function loadQuarterPriorities() {
+  try { const r = localStorage.getItem("producer-quarter-priorities"); return r ? JSON.parse(r) : DEFAULT_PRIORITIES; }
+  catch { return DEFAULT_PRIORITIES; }
+}
+
+function saveQuarterPriorities(priorities) {
+  try { localStorage.setItem("producer-quarter-priorities", JSON.stringify(priorities)); }
+  catch (e) { console.error("Save error:", e); }
+}
+
+// ---- Components ----
+
+function TagBadge({ tagId, small, availableTags = [] }) {
+  const tag = availableTags.find((t) => t.id === tagId);
+  if (!tag) return null;
+  return (
+    <span
+      style={{
+        background: tag.bg,
+        color: tag.color,
+        border: `1px solid ${tag.color}30`,
+        padding: small ? "1px 6px" : "2px 8px",
+        borderRadius: 10,
+        fontSize: small ? 12 : 13,
+        fontWeight: 600,
+        letterSpacing: 0.3,
+        whiteSpace: "nowrap",
+      }}
+    >
+      {tag.label}
+    </span>
+  );
+}
+
+function TaskCard({ task, onUpdate, onDelete, onSetActive, isActive, dragHandleProps, availableTags, index, onMoveUp, onMoveDown }) {
+  const [editing, setEditing] = useState(false);
+  const [editTitle, setEditTitle] = useState(task.title);
+  const [stateOpen, setStateOpen] = useState(false);
+  const [tagsOpen, setTagsOpen] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const [newSub, setNewSub] = useState("");
+  const dropdownRef = useRef(null);
+  const tagDropdownRef = useRef(null);
+  const subInputRef = useRef(null);
+
+  const subtasks = task.subtasks || [];
+  const doneCount = subtasks.filter((s) => s.done).length;
+  const hasSubtasks = subtasks.length > 0;
+
+  const handleTitleSave = () => {
+    if (editTitle.trim()) {
+      onUpdate({ ...task, title: editTitle.trim() });
+    }
+    setEditing(false);
+  };
+
+  const addSubtask = () => {
+    if (!newSub.trim()) return;
+    const updated = [...subtasks, { id: generateId(), text: newSub.trim(), done: false }];
+    onUpdate({ ...task, subtasks: updated });
+    setNewSub("");
+    subInputRef.current?.focus();
+  };
+
+  const toggleSubtask = (subId) => {
+    const updated = subtasks.map((s) => s.id === subId ? { ...s, done: !s.done } : s);
+    const newState = task.state === "TODO" ? "WIP" : task.state;
+    onUpdate({ ...task, subtasks: updated, state: newState });
+  };
+
+  const deleteSubtask = (subId) => {
+    onUpdate({ ...task, subtasks: subtasks.filter((s) => s.id !== subId) });
+  };
+
+  // Close dropdowns on outside click
+  useEffect(() => {
+    if (!stateOpen) return;
+    const handler = (e) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target)) setStateOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [stateOpen]);
+
+  useEffect(() => {
+    if (!tagsOpen) return;
+    const handler = (e) => {
+      if (tagDropdownRef.current && !tagDropdownRef.current.contains(e.target)) setTagsOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [tagsOpen]);
+
+  const toggleTag = (tagId) => {
+    const newTags = task.tags.includes(tagId)
+      ? task.tags.filter((t) => t !== tagId)
+      : [...task.tags, tagId];
+    onUpdate({ ...task, tags: newTags });
+  };
+
+  return (
+    <div
+      style={{
+        background: isActive ? "#262828" : "#1e2020",
+        border: isActive ? "1px solid #f59e0b50" : "1px solid #1e2333",
+        borderRadius: 14,
+        transition: "all 0.2s ease",
+        position: "relative",
+      }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.borderColor = isActive ? "#c8a05050" : "#3a3c3c";
+        const del = e.currentTarget.querySelector("[data-task-delete]");
+        if (del) del.style.opacity = "1";
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.borderColor = isActive ? "#c8a05035" : "#2c2e2e";
+        const del = e.currentTarget.querySelector("[data-task-delete]");
+        if (del) del.style.opacity = "0";
+      }}
+    >
+      {isActive && (
+        <div
+          style={{
+            position: "absolute",
+            left: -1,
+            top: 8,
+            bottom: 8,
+            width: 2,
+            background: "#c8a050",
+            borderRadius: "0 2px 2px 0",
+          }}
+        />
+      )}
+
+      {/* Main row */}
+      <div style={{
+        padding: "0 18px",
+        height: 50,
+        display: "flex",
+        alignItems: "center",
+        gap: 12,
+      }}>
+        {/* Drag handle */}
+        <div
+          {...dragHandleProps}
+          style={{
+            color: "#4a4744",
+            cursor: "grab",
+            fontSize: 13,
+            userSelect: "none",
+            lineHeight: 1,
+            letterSpacing: 1,
+            flexShrink: 0,
+            ...(dragHandleProps?.style || {}),
+          }}
+          title="Arrastrar para reordenar"
+        >
+          ⠿
+        </div>
+
+        {/* Index number */}
+        {index != null && (
+          <div style={{
+            color: "#4a4744",
+            fontSize: 12,
+            fontWeight: 700,
+            fontVariantNumeric: "tabular-nums",
+            minWidth: 20,
+            textAlign: "right",
+            flexShrink: 0,
+            userSelect: "none",
+          }}>
+            {index}
+          </div>
+        )}
+
+        {/* Expand toggle */}
+        <button
+          onClick={() => { setExpanded(!expanded); if (!expanded) setTimeout(() => subInputRef.current?.focus(), 50); }}
+          style={{
+            background: "transparent",
+            border: "none",
+            color: hasSubtasks ? "#6a6562" : "#2c2e2e",
+            cursor: "pointer",
+            fontSize: 10,
+            padding: "2px 0",
+            flexShrink: 0,
+            transition: "color 0.15s",
+            transform: expanded ? "rotate(90deg)" : "rotate(0deg)",
+            width: 12,
+            textAlign: "center",
+          }}
+          onMouseEnter={(e) => (e.currentTarget.style.color = "#9a9590")}
+          onMouseLeave={(e) => (e.currentTarget.style.color = hasSubtasks ? "#6a6562" : "#2c2e2e")}
+          title="Subtareas"
+        >
+          ▶
+        </button>
+
+        {/* Title */}
+        {editing ? (
+          <input
+            value={editTitle}
+            onChange={(e) => setEditTitle(e.target.value)}
+            onBlur={handleTitleSave}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") handleTitleSave();
+              if (e.key === "Escape") setEditing(false);
+            }}
+            autoFocus
+            style={{
+              flex: 1,
+              minWidth: 0,
+              background: "#161818",
+              border: "1px solid #2a3050",
+              borderRadius: 10,
+              color: "#e4e0db",
+              padding: "3px 8px",
+              fontSize: 15,
+              fontFamily: "inherit",
+              outline: "none",
+            }}
+          />
+        ) : (
+          <div
+            onClick={() => setEditing(true)}
+            style={{
+              flex: 1,
+              minWidth: 0,
+              color: task.state === "DONE" ? "#6a6562" : "#e4e0db",
+              fontSize: 15,
+              cursor: "text",
+              textDecoration: task.state === "DONE" ? "line-through" : "none",
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+            }}
+          >
+            {task.title}
+            {hasSubtasks && !expanded && (
+              <span style={{
+                color: doneCount === subtasks.length ? "#7aab6a50" : "#47556980",
+                fontSize: 12,
+                fontWeight: 600,
+                flexShrink: 0,
+              }}>
+                {doneCount}/{subtasks.length}
+              </span>
+            )}
+          </div>
+        )}
+
+        {/* Status dropdown */}
+        <div ref={dropdownRef} style={{ position: "relative", flexShrink: 0, width: 90 }}>
+          <button
+            onClick={() => setStateOpen(!stateOpen)}
+            style={{
+              background: `${STATE_COLORS[task.state]}12`,
+              border: `1px solid ${STATE_COLORS[task.state]}30`,
+              color: STATE_COLORS[task.state],
+              borderRadius: 10,
+              padding: "3px 8px",
+              fontSize: 12,
+              fontWeight: 700,
+              cursor: "pointer",
+              letterSpacing: 0.5,
+              transition: "all 0.15s",
+              whiteSpace: "nowrap",
+              display: "flex",
+              alignItems: "center",
+              gap: 4,
+              width: "100%",
+              justifyContent: "space-between",
+            }}
+          >
+            <span style={{ width: 7, height: 7, borderRadius: "50%", background: STATE_COLORS[task.state], flexShrink: 0 }} />
+            {STATE_LABELS[task.state]}
+            <span style={{ fontSize: 8, opacity: 0.4 }}>▼</span>
+          </button>
+          {stateOpen && (
+            <div
+              style={{
+                position: "absolute",
+                top: "calc(100% + 4px)",
+                right: 0,
+                background: "#282a2a",
+                border: "1px solid #1e2333",
+                borderRadius: 12,
+                padding: 4,
+                zIndex: 50,
+                minWidth: 100,
+                boxShadow: "0 12px 32px #00000050, 0 0 0 1px #ffffff06",
+              }}
+            >
+              {STATES.map((s) => (
+                <button
+                  key={s}
+                  onClick={() => {
+                    onUpdate({ ...task, state: s });
+                    setStateOpen(false);
+                  }}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    width: "100%",
+                    textAlign: "left",
+                    background: task.state === s ? `${STATE_COLORS[s]}15` : "transparent",
+                    border: "none",
+                    color: task.state === s ? STATE_COLORS[s] : "#9a9590",
+                    padding: "5px 10px",
+                    fontSize: 13,
+                    fontWeight: 600,
+                    cursor: "pointer",
+                    borderRadius: 10,
+                    transition: "background 0.1s",
+                  }}
+                  onMouseEnter={(e) => {
+                    if (task.state !== s) e.currentTarget.style.background = "#1e233380";
+                  }}
+                  onMouseLeave={(e) => {
+                    if (task.state !== s) e.currentTarget.style.background = "transparent";
+                  }}
+                >
+                  <span style={{ width: 7, height: 7, borderRadius: "50%", background: STATE_COLORS[s], flexShrink: 0, opacity: task.state === s ? 1 : 0.5 }} />
+                  {STATE_LABELS[s]}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Project tags */}
+        <div ref={tagDropdownRef} style={{ position: "relative", flexShrink: 0, width: 120 }}>
+          <div
+            onClick={() => setTagsOpen(!tagsOpen)}
+            style={{
+              display: "flex", gap: 4, alignItems: "center", cursor: "pointer",
+              overflow: "hidden", height: "100%",
+            }}
+          >
+            {task.tags.length > 0 ? (
+              task.tags.map((t) => (
+                <TagBadge key={t} tagId={t} small availableTags={availableTags} />
+              ))
+            ) : (
+              <span style={{ color: "#4a4744", fontSize: 12, fontStyle: "italic" }}>+ proyecto</span>
+            )}
+          </div>
+          {tagsOpen && availableTags.length > 0 && (
+            <div style={{
+              position: "absolute",
+              top: "calc(100% + 8px)",
+              right: 0,
+              background: "#282a2a",
+              border: "1px solid #1e2333",
+              borderRadius: 12,
+              padding: 4,
+              zIndex: 50,
+              minWidth: 160,
+              boxShadow: "0 12px 32px #00000050, 0 0 0 1px #ffffff06",
+            }}>
+              {availableTags.map((tag) => {
+                const selected = task.tags.includes(tag.id);
+                return (
+                  <button
+                    key={tag.id}
+                    onClick={() => toggleTag(tag.id)}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8,
+                      width: "100%",
+                      textAlign: "left",
+                      background: selected ? `${tag.color}15` : "transparent",
+                      border: "none",
+                      color: selected ? tag.color : "#9a9590",
+                      padding: "5px 10px",
+                      fontSize: 13,
+                      fontWeight: 600,
+                      cursor: "pointer",
+                      borderRadius: 10,
+                      transition: "background 0.1s",
+                    }}
+                    onMouseEnter={(e) => { if (!selected) e.currentTarget.style.background = "#1e233380"; }}
+                    onMouseLeave={(e) => { if (!selected) e.currentTarget.style.background = "transparent"; }}
+                  >
+                    <div style={{
+                      width: 8, height: 8, borderRadius: 2,
+                      background: selected ? tag.color : "transparent",
+                      border: `1px solid ${selected ? tag.color : "#4a4744"}`,
+                      flexShrink: 0,
+                    }} />
+                    {tag.label}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Focus toggle */}
+        <button
+          onClick={() => onSetActive(isActive ? null : task.id)}
+          title={isActive ? "Desactivar foco" : "Activar foco"}
+          style={{
+            background: isActive ? "#c8a05018" : "transparent",
+            border: "none",
+            color: isActive ? "#c8a050" : "#6a6562",
+            cursor: "pointer",
+            fontSize: 16,
+            padding: "2px 4px",
+            borderRadius: 10,
+            transition: "all 0.15s",
+            flexShrink: 0,
+          }}
+          onMouseEnter={(e) => (e.currentTarget.style.color = "#c8a050")}
+          onMouseLeave={(e) => (e.currentTarget.style.color = isActive ? "#c8a050" : "#6a6562")}
+        >
+          ◎
+        </button>
+
+        {/* Reorder arrows */}
+        {(onMoveUp || onMoveDown) && (
+          <div style={{ display: "flex", flexDirection: "column", flexShrink: 0, gap: 0 }}>
+            <button
+              onClick={onMoveUp}
+              disabled={!onMoveUp}
+              style={{
+                background: "transparent",
+                border: "none",
+                color: onMoveUp ? "#4a4744" : "#2c2e2e",
+                cursor: onMoveUp ? "pointer" : "default",
+                fontSize: 8,
+                lineHeight: 1,
+                padding: "1px 3px",
+                transition: "color 0.15s",
+              }}
+              onMouseEnter={(e) => { if (onMoveUp) e.currentTarget.style.color = "#9a9590"; }}
+              onMouseLeave={(e) => { if (onMoveUp) e.currentTarget.style.color = "#4a4744"; }}
+            >▲</button>
+            <button
+              onClick={onMoveDown}
+              disabled={!onMoveDown}
+              style={{
+                background: "transparent",
+                border: "none",
+                color: onMoveDown ? "#4a4744" : "#2c2e2e",
+                cursor: onMoveDown ? "pointer" : "default",
+                fontSize: 8,
+                lineHeight: 1,
+                padding: "1px 3px",
+                transition: "color 0.15s",
+              }}
+              onMouseEnter={(e) => { if (onMoveDown) e.currentTarget.style.color = "#9a9590"; }}
+              onMouseLeave={(e) => { if (onMoveDown) e.currentTarget.style.color = "#4a4744"; }}
+            >▼</button>
+          </div>
+        )}
+
+        {/* Delete (appears on hover) */}
+        <button
+          data-task-delete
+          onClick={() => onDelete(task.id)}
+          style={{
+            background: "transparent",
+            border: "none",
+            color: "#4a4744",
+            cursor: "pointer",
+            fontSize: 12,
+            padding: "2px 4px",
+            opacity: 0,
+            transition: "opacity 0.15s, color 0.15s",
+            flexShrink: 0,
+          }}
+          onMouseEnter={(e) => (e.currentTarget.style.color = "#b85a50")}
+          onMouseLeave={(e) => (e.currentTarget.style.color = "#4a4744")}
+        >
+          ✕
+        </button>
+      </div>
+
+      {/* Subtasks panel */}
+      {expanded && (
+        <div style={{
+          padding: "0 14px 10px",
+          marginLeft: 52,
+          borderTop: "1px solid #1e233340",
+        }}>
+          {/* Existing subtasks */}
+          {subtasks.map((sub) => (
+            <div
+              key={sub.id}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                padding: "5px 0",
+              }}
+              onMouseEnter={(e) => {
+                const del = e.currentTarget.querySelector("[data-sub-delete]");
+                if (del) del.style.opacity = "1";
+              }}
+              onMouseLeave={(e) => {
+                const del = e.currentTarget.querySelector("[data-sub-delete]");
+                if (del) del.style.opacity = "0";
+              }}
+            >
+              <button
+                onClick={() => toggleSubtask(sub.id)}
+                style={{
+                  width: 14,
+                  height: 14,
+                  borderRadius: 8,
+                  border: sub.done ? "1px solid #22c55e50" : "1px solid #334155",
+                  background: sub.done ? "#7aab6a18" : "transparent",
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  flexShrink: 0,
+                  padding: 0,
+                  transition: "all 0.15s",
+                }}
+              >
+                {sub.done && (
+                  <span style={{ color: "#7aab6a", fontSize: 10, lineHeight: 1 }}>✓</span>
+                )}
+              </button>
+              <span style={{
+                fontSize: 14,
+                color: sub.done ? "#4a4744" : "#9a9590",
+                textDecoration: sub.done ? "line-through" : "none",
+                flex: 1,
+                lineHeight: 1.3,
+              }}>
+                {sub.text}
+              </span>
+              <button
+                data-sub-delete
+                onClick={() => deleteSubtask(sub.id)}
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  color: "#4a4744",
+                  cursor: "pointer",
+                  fontSize: 10,
+                  padding: "1px 3px",
+                  opacity: 0,
+                  transition: "opacity 0.15s, color 0.15s",
+                  flexShrink: 0,
+                }}
+                onMouseEnter={(e) => (e.currentTarget.style.color = "#b85a50")}
+                onMouseLeave={(e) => (e.currentTarget.style.color = "#4a4744")}
+              >
+                ✕
+              </button>
+            </div>
+          ))}
+
+          {/* Add subtask input */}
+          <div style={{ display: "flex", alignItems: "center", gap: 8, paddingTop: 4, opacity: 0.4, transition: "opacity 0.15s" }}
+            onMouseEnter={(e) => (e.currentTarget.style.opacity = "0.8")}
+            onMouseLeave={(e) => { if (!newSub) e.currentTarget.style.opacity = "0.4"; }}
+            onFocus={(e) => (e.currentTarget.style.opacity = "1")}
+            onBlur={(e) => { if (!newSub) e.currentTarget.style.opacity = "0.4"; }}
+          >
+            <div style={{
+              width: 16, height: 16, borderRadius: 8,
+              border: "1px dashed #1e233380", flexShrink: 0,
+            }} />
+            <input
+              ref={subInputRef}
+              value={newSub}
+              onChange={(e) => setNewSub(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") addSubtask();
+                if (e.key === "Escape") { setNewSub(""); e.target.blur(); }
+              }}
+              placeholder="+ subtarea"
+              style={{
+                flex: 1,
+                background: "transparent",
+                border: "none",
+                color: "#6a6562",
+                fontSize: 13,
+                fontFamily: "inherit",
+                outline: "none",
+                padding: "2px 0",
+              }}
+            />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function NewTaskForm({ onAdd, availableTags }) {
+  const [open, setOpen] = useState(false);
+  const [title, setTitle] = useState("");
+  const [tags, setTags] = useState([]);
+  const [subtasks, setSubtasks] = useState([]);
+  const [newSub, setNewSub] = useState("");
+  const inputRef = useRef(null);
+  const formRef = useRef(null);
+  const subInputRef = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e) => {
+      if (formRef.current && !formRef.current.contains(e.target)) {
+        setOpen(false);
+        setTitle("");
+        setTags([]);
+        setSubtasks([]);
+        setNewSub("");
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  const handleSubmit = () => {
+    if (!title.trim()) return;
+    onAdd({
+      id: generateId(),
+      title: title.trim(),
+      tags,
+      subtasks,
+      state: "TODO",
+      createdAt: Date.now(),
+      order: Date.now(),
+    });
+    setTitle("");
+    setTags([]);
+    setSubtasks([]);
+    setNewSub("");
+    inputRef.current?.focus();
+  };
+
+  const toggleTag = (tagId) => {
+    setTags((prev) => (prev.includes(tagId) ? prev.filter((t) => t !== tagId) : [...prev, tagId]));
+  };
+
+  const addSubtask = () => {
+    if (!newSub.trim()) return;
+    setSubtasks((prev) => [...prev, { id: generateId(), text: newSub.trim(), done: false }]);
+    setNewSub("");
+    subInputRef.current?.focus();
+  };
+
+  const removeSubtask = (subId) => {
+    setSubtasks((prev) => prev.filter((s) => s.id !== subId));
+  };
+
+  if (!open) {
+    return (
+      <button
+        onClick={() => {
+          setOpen(true);
+          setTimeout(() => inputRef.current?.focus(), 50);
+        }}
+        style={{
+          background: "#1e2020",
+          border: "1px dashed #1e2333",
+          borderRadius: 14,
+          color: "#6a6562",
+          padding: "12px 16px",
+          cursor: "pointer",
+          fontSize: 15,
+          width: "100%",
+          textAlign: "left",
+          transition: "all 0.2s",
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.borderColor = "#3a3c3c";
+          e.currentTarget.style.color = "#847f7a";
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.borderColor = "#2c2e2e";
+          e.currentTarget.style.color = "#6a6562";
+        }}
+      >
+        + Nueva tarea
+      </button>
+    );
+  }
+
+  return (
+    <div
+      ref={formRef}
+      style={{
+        background: "#1e2020",
+        border: "1px solid #1e2333",
+        borderRadius: 14,
+        padding: 14,
+        display: "flex",
+        flexDirection: "column",
+        gap: 10,
+      }}
+    >
+      <input
+        ref={inputRef}
+        value={title}
+        onChange={(e) => setTitle(e.target.value)}
+        onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
+        placeholder="¿Qué necesitas hacer?"
+        style={{
+          background: "#161818",
+          border: "1px solid #1e2333",
+          borderRadius: 12,
+          color: "#e4e0db",
+          padding: "8px 12px",
+          fontSize: 15,
+          fontFamily: "inherit",
+          outline: "none",
+        }}
+      />
+
+      {/* Tags */}
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+        {availableTags.map((tag) => (
+          <button
+            key={tag.id}
+            onClick={() => toggleTag(tag.id)}
+            style={{
+              background: tags.includes(tag.id) ? tag.bg : "transparent",
+              border: `1px solid ${tags.includes(tag.id) ? tag.color + "50" : "#2c2e2e"}`,
+              color: tags.includes(tag.id) ? tag.color : "#6a6562",
+              borderRadius: 10,
+              padding: "3px 8px",
+              fontSize: 13,
+              fontWeight: 600,
+              cursor: "pointer",
+              transition: "all 0.15s",
+            }}
+          >
+            {tag.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Subtasks */}
+      <div style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: 2,
+      }}>
+        {subtasks.map((sub) => (
+          <div
+            key={sub.id}
+            style={{ display: "flex", alignItems: "center", gap: 8, padding: "3px 0" }}
+            onMouseEnter={(e) => { const d = e.currentTarget.querySelector("[data-rm]"); if (d) d.style.opacity = "1"; }}
+            onMouseLeave={(e) => { const d = e.currentTarget.querySelector("[data-rm]"); if (d) d.style.opacity = "0"; }}
+          >
+            <div style={{
+              width: 12, height: 12, borderRadius: 8,
+              border: "1px solid #334155", flexShrink: 0,
+            }} />
+            <span style={{ fontSize: 14, color: "#9a9590", flex: 1 }}>{sub.text}</span>
+            <button
+              data-rm
+              onClick={() => removeSubtask(sub.id)}
+              style={{
+                background: "transparent", border: "none", color: "#4a4744",
+                cursor: "pointer", fontSize: 10, padding: "1px 3px",
+                opacity: 0, transition: "opacity 0.15s, color 0.15s", flexShrink: 0,
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.color = "#b85a50")}
+              onMouseLeave={(e) => (e.currentTarget.style.color = "#4a4744")}
+            >✕</button>
+          </div>
+        ))}
+        <div style={{ display: "flex", alignItems: "center", gap: 8, paddingTop: 2, opacity: 0.4, transition: "opacity 0.15s" }}
+          onMouseEnter={(e) => (e.currentTarget.style.opacity = "0.8")}
+          onMouseLeave={(e) => { if (!newSub) e.currentTarget.style.opacity = "0.4"; }}
+          onFocus={(e) => (e.currentTarget.style.opacity = "1")}
+          onBlur={(e) => { if (!newSub) e.currentTarget.style.opacity = "0.4"; }}
+        >
+          <div style={{
+            width: 12, height: 12, borderRadius: 8,
+            border: "1px dashed #1e233380", flexShrink: 0,
+          }} />
+          <input
+            ref={subInputRef}
+            value={newSub}
+            onChange={(e) => setNewSub(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") { e.preventDefault(); addSubtask(); }
+              if (e.key === "Escape") { setNewSub(""); e.target.blur(); }
+            }}
+            placeholder="+ subtarea"
+            style={{
+              flex: 1, background: "transparent", border: "none",
+              color: "#6a6562", fontSize: 13, fontFamily: "inherit",
+              outline: "none", padding: "2px 0",
+            }}
+          />
+        </div>
+      </div>
+
+      {/* Actions */}
+      <div style={{ display: "flex", gap: 8 }}>
+        <button
+          onClick={handleSubmit}
+          disabled={!title.trim()}
+          style={{
+            background: title.trim() ? "#c8a050" : "#2c2e2e",
+            border: "none",
+            borderRadius: 12,
+            color: title.trim() ? "#161818" : "#4a4744",
+            padding: "6px 16px",
+            fontSize: 14,
+            fontWeight: 700,
+            cursor: title.trim() ? "pointer" : "default",
+            transition: "all 0.15s",
+          }}
+        >
+          Añadir
+        </button>
+        <button
+          onClick={() => {
+            setOpen(false);
+            setTitle("");
+            setTags([]);
+            setSubtasks([]);
+            setNewSub("");
+          }}
+          style={{
+            background: "transparent",
+            border: "1px solid #1e2333",
+            borderRadius: 12,
+            color: "#6a6562",
+            padding: "6px 12px",
+            fontSize: 14,
+            cursor: "pointer",
+          }}
+        >
+          Cancelar
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function QuarterPriorities({ priorities, onChange }) {
+  const [editingId, setEditingId] = useState(null);
+  const [editValue, setEditValue] = useState("");
+  const inputRef = useRef(null);
+
+  const startEdit = (p) => {
+    setEditingId(p.id);
+    setEditValue(p.text);
+    setTimeout(() => inputRef.current?.focus(), 30);
+  };
+
+  const saveEdit = () => {
+    if (editingId !== null) {
+      onChange(priorities.map((p) => (p.id === editingId ? { ...p, text: editValue } : p)));
+    }
+    setEditingId(null);
+  };
+
+  const addRow = () => {
+    const nextId = priorities.length > 0 ? Math.max(...priorities.map((p) => p.id)) + 1 : 1;
+    const updated = [...priorities, { id: nextId, text: "" }];
+    onChange(updated);
+    setEditingId(nextId);
+    setEditValue("");
+    setTimeout(() => inputRef.current?.focus(), 50);
+  };
+
+  const removeRow = (id) => {
+    const updated = priorities.filter((p) => p.id !== id).map((p, i) => ({ ...p, id: i + 1 }));
+    onChange(updated);
+    setEditingId(null);
+  };
+
+  const isEmpty = priorities.every((p) => !p.text.trim());
+
+  return (
+    <div
+      style={{
+        background: "#1c1e1e",
+        border: "1px solid #1e2333",
+        borderRadius: 16,
+        padding: "16px 20px",
+        marginBottom: 28,
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: isEmpty ? 0 : 12 }}>
+        <div
+          style={{
+            color: "#6a6562",
+            fontSize: 12,
+            fontWeight: 700,
+            letterSpacing: 1.5,
+            textTransform: "uppercase",
+          }}
+        >
+          Prioridades del quarter
+        </div>
+        <div style={{ flex: 1 }} />
+        <button
+          onClick={addRow}
+          style={{
+            background: "transparent",
+            border: "none",
+            color: "#4a4744",
+            fontSize: 16,
+            cursor: "pointer",
+            padding: "0 4px",
+            lineHeight: 1,
+            transition: "color 0.15s",
+          }}
+          onMouseEnter={(e) => (e.currentTarget.style.color = "#847f7a")}
+          onMouseLeave={(e) => (e.currentTarget.style.color = "#4a4744")}
+          title="Añadir prioridad"
+        >
+          +
+        </button>
+      </div>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+        {priorities.map((p, idx) => (
+          <div
+            key={p.id}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              padding: "4px 0",
+              borderRadius: 10,
+              group: "row",
+            }}
+            onMouseEnter={(e) => {
+              const del = e.currentTarget.querySelector("[data-delete]");
+              if (del) del.style.opacity = "1";
+            }}
+            onMouseLeave={(e) => {
+              const del = e.currentTarget.querySelector("[data-delete]");
+              if (del) del.style.opacity = "0";
+            }}
+          >
+            <div
+              style={{
+                color: idx === 0 ? "#c8a050" : idx === 1 ? "#847f7a" : "#4a4744",
+                fontSize: 15,
+                fontWeight: 800,
+                width: 20,
+                textAlign: "right",
+                flexShrink: 0,
+                fontVariantNumeric: "tabular-nums",
+              }}
+            >
+              {idx + 1}
+            </div>
+            <div
+              style={{
+                width: 1,
+                height: 14,
+                background: idx === 0 ? "#c8a05020" : "#2c2e2e",
+                flexShrink: 0,
+              }}
+            />
+            {editingId === p.id ? (
+              <input
+                ref={inputRef}
+                value={editValue}
+                onChange={(e) => setEditValue(e.target.value)}
+                onBlur={saveEdit}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") saveEdit();
+                  if (e.key === "Escape") setEditingId(null);
+                }}
+                placeholder="Definir prioridad..."
+                style={{
+                  flex: 1,
+                  background: "#161818",
+                  border: "1px solid #2a3050",
+                  borderRadius: 10,
+                  color: "#e4e0db",
+                  padding: "3px 8px",
+                  fontSize: 15,
+                  fontFamily: "inherit",
+                  outline: "none",
+                }}
+              />
+            ) : (
+              <div
+                onClick={() => startEdit(p)}
+                style={{
+                  flex: 1,
+                  color: p.text ? (idx === 0 ? "#ece8e3" : "#9a9590") : "#3a3c3c",
+                  fontSize: 15,
+                  cursor: "text",
+                  padding: "3px 0",
+                  lineHeight: 1.3,
+                  fontStyle: p.text ? "normal" : "italic",
+                }}
+              >
+                {p.text || "Definir prioridad..."}
+              </div>
+            )}
+            <button
+              data-delete
+              onClick={() => removeRow(p.id)}
+              style={{
+                background: "transparent",
+                border: "none",
+                color: "#4a4744",
+                fontSize: 12,
+                cursor: "pointer",
+                padding: "2px 4px",
+                opacity: 0,
+                transition: "opacity 0.15s, color 0.15s",
+                flexShrink: 0,
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.color = "#b85a50")}
+              onMouseLeave={(e) => (e.currentTarget.style.color = "#4a4744")}
+            >
+              ✕
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function FocusMode({ task, onUpdate, onExit, availableTags }) {
+  const [newSub, setNewSub] = useState("");
+  const subInputRef = useRef(null);
+  const subtasks = task.subtasks || [];
+
+  const cycleState = () => {
+    const idx = STATES.indexOf(task.state);
+    const next = STATES[(idx + 1) % STATES.length];
+    onUpdate({ ...task, state: next });
+  };
+
+  const toggleSubtask = (subId) => {
+    const updated = subtasks.map((s) => s.id === subId ? { ...s, done: !s.done } : s);
+    const newState = task.state === "TODO" ? "WIP" : task.state;
+    onUpdate({ ...task, subtasks: updated, state: newState });
+  };
+
+  const addSubtask = () => {
+    if (!newSub.trim()) return;
+    onUpdate({ ...task, subtasks: [...subtasks, { id: generateId(), text: newSub.trim(), done: false }] });
+    setNewSub("");
+    subInputRef.current?.focus();
+  };
+
+  const deleteSubtask = (subId) => {
+    onUpdate({ ...task, subtasks: subtasks.filter((s) => s.id !== subId) });
+  };
+
+  return (
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "#121414",
+        zIndex: 1000,
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        fontFamily: "'DM Sans', 'Segoe UI', sans-serif",
+        padding: "64px 32px 32px",
+        overflowY: "auto",
+      }}
+    >
+      {/* Spacer to vertically center when content is short */}
+      <div style={{ flex: 1 }} />
+      {/* Ambient glow */}
+      <div
+        style={{
+          position: "absolute",
+          top: "30%",
+          left: "50%",
+          transform: "translate(-50%, -50%)",
+          width: 500,
+          height: 500,
+          background: "radial-gradient(circle, #f59e0b08 0%, transparent 70%)",
+          pointerEvents: "none",
+        }}
+      />
+
+      {/* Exit */}
+      <button
+        onClick={onExit}
+        style={{
+          position: "absolute",
+          top: 24,
+          right: 24,
+          background: "transparent",
+          border: "1px solid #1e2333",
+          color: "#6a6562",
+          borderRadius: 12,
+          padding: "6px 14px",
+          fontSize: 14,
+          cursor: "pointer",
+          transition: "all 0.15s",
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.borderColor = "#3a3c3c";
+          e.currentTarget.style.color = "#9a9590";
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.borderColor = "#2c2e2e";
+          e.currentTarget.style.color = "#6a6562";
+        }}
+      >
+        <span style={{ fontSize: 12 }}>ESC</span> Salir del foco
+      </button>
+
+      {/* Label */}
+      <div
+        style={{
+          color: "#4a4744",
+          fontSize: 13,
+          fontWeight: 700,
+          letterSpacing: 2,
+          textTransform: "uppercase",
+          marginBottom: 24,
+        }}
+      >
+        Modo Foco
+      </div>
+
+      {/* Tags */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 16, alignItems: "center" }}>
+        {task.tags.map((t) => (
+          <TagBadge key={t} tagId={t} availableTags={availableTags} />
+        ))}
+      </div>
+
+      {/* Task title */}
+      <div
+        style={{
+          color: "#ece8e3",
+          fontSize: 28,
+          fontWeight: 600,
+          textAlign: "center",
+          maxWidth: 600,
+          lineHeight: 1.3,
+          marginBottom: 32,
+        }}
+      >
+        {task.title}
+      </div>
+
+      {/* Subtasks checklist */}
+      <div style={{
+          width: "100%",
+          maxWidth: 400,
+          marginBottom: 32,
+        }}>
+          {subtasks.map((sub) => (
+            <div
+              key={sub.id}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+                padding: "6px 0",
+              }}
+              onMouseEnter={(e) => {
+                const del = e.currentTarget.querySelector("[data-sub-del]");
+                if (del) del.style.opacity = "1";
+              }}
+              onMouseLeave={(e) => {
+                const del = e.currentTarget.querySelector("[data-sub-del]");
+                if (del) del.style.opacity = "0";
+              }}
+            >
+              <button
+                onClick={() => toggleSubtask(sub.id)}
+                style={{
+                  width: 18,
+                  height: 18,
+                  borderRadius: 10,
+                  border: sub.done ? "1px solid #22c55e50" : "1px solid #334155",
+                  background: sub.done ? "#7aab6a18" : "transparent",
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  flexShrink: 0,
+                  padding: 0,
+                  transition: "all 0.15s",
+                }}
+              >
+                {sub.done && (
+                  <span style={{ color: "#7aab6a", fontSize: 13, lineHeight: 1 }}>✓</span>
+                )}
+              </button>
+              <span style={{
+                fontSize: 16,
+                color: sub.done ? "#6a6562" : "#9a9590",
+                textDecoration: sub.done ? "line-through" : "none",
+                flex: 1,
+              }}>
+                {sub.text}
+              </span>
+              <button
+                data-sub-del
+                onClick={() => deleteSubtask(sub.id)}
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  color: "#4a4744",
+                  cursor: "pointer",
+                  fontSize: 12,
+                  padding: "2px 4px",
+                  opacity: 0,
+                  transition: "opacity 0.15s, color 0.15s",
+                }}
+                onMouseEnter={(e) => (e.currentTarget.style.color = "#b85a50")}
+                onMouseLeave={(e) => (e.currentTarget.style.color = "#4a4744")}
+              >
+                ✕
+              </button>
+            </div>
+          ))}
+          <div style={{ display: "flex", alignItems: "center", gap: 10, paddingTop: 4, opacity: 0.35, transition: "opacity 0.15s" }}
+            onMouseEnter={(e) => (e.currentTarget.style.opacity = "0.8")}
+            onMouseLeave={(e) => { if (!newSub) e.currentTarget.style.opacity = "0.35"; }}
+            onFocus={(e) => (e.currentTarget.style.opacity = "1")}
+            onBlur={(e) => { if (!newSub) e.currentTarget.style.opacity = "0.35"; }}
+          >
+            <div style={{
+              width: 18, height: 18, borderRadius: 10,
+              border: "1px dashed #1e233380", flexShrink: 0,
+            }} />
+            <input
+              ref={subInputRef}
+              value={newSub}
+              onChange={(e) => setNewSub(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") addSubtask();
+                if (e.key === "Escape") { setNewSub(""); e.target.blur(); }
+              }}
+              placeholder="+ subtarea"
+              style={{
+                flex: 1,
+                background: "transparent",
+                border: "none",
+                color: "#6a6562",
+                fontSize: 15,
+                fontFamily: "inherit",
+                outline: "none",
+                padding: "2px 0",
+              }}
+            />
+          </div>
+        </div>
+
+      {/* State control */}
+      <button
+        onClick={cycleState}
+        style={{
+          background: `${STATE_COLORS[task.state]}15`,
+          border: `2px solid ${STATE_COLORS[task.state]}50`,
+          color: STATE_COLORS[task.state],
+          borderRadius: 16,
+          padding: "12px 32px",
+          fontSize: 16,
+          fontWeight: 700,
+          cursor: "pointer",
+          letterSpacing: 1,
+          transition: "all 0.2s",
+        }}
+      >
+        {STATE_LABELS[task.state]}
+      </button>
+
+      <div style={{ flex: 1 }} />
+    </div>
+  );
+}
+
+// ---- Main App ----
+function CommandCenter() {
+  const [tasks, setTasks] = useState([]);
+  const [quarterPriorities, setQuarterPriorities] = useState(DEFAULT_PRIORITIES);
+  const [loading, setLoading] = useState(true);
+  const [activeTaskId, setActiveTaskId] = useState(null);
+  const [filterTag, setFilterTag] = useState(null);
+  const [filterState, setFilterState] = useState(null);
+  const [showDone, setShowDone] = useState(false);
+  const [focusMode, setFocusMode] = useState(false);
+  const [viewMode, setViewMode] = useState("backlog");
+
+  // Load on mount
+  useEffect(() => {
+    setTasks(loadTasks());
+    setQuarterPriorities(loadQuarterPriorities());
+    setLoading(false);
+  }, []);
+
+  // Save on change
+  useEffect(() => {
+    if (!loading) saveTasks(tasks);
+  }, [tasks, loading]);
+
+  useEffect(() => {
+    if (!loading) saveQuarterPriorities(quarterPriorities);
+  }, [quarterPriorities, loading]);
+
+  // ESC to exit focus
+  useEffect(() => {
+    const handler = (e) => {
+      if (e.key === "Escape") setFocusMode(false);
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
+
+  const addTask = useCallback((task) => {
+    setTasks((prev) => [...prev, task]);
+  }, []);
+
+  const updateTask = useCallback((updated) => {
+    setTasks((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
+  }, []);
+
+  const deleteTask = useCallback((id) => {
+    setTasks((prev) => prev.filter((t) => t.id !== id));
+    if (activeTaskId === id) setActiveTaskId(null);
+  }, [activeTaskId]);
+
+  const setActive = useCallback((id) => {
+    setActiveTaskId(id);
+  }, []);
+
+  const moveTask = useCallback((taskId, direction) => {
+    setTasks((prev) => {
+      const idx = prev.findIndex((t) => t.id === taskId);
+      if (idx < 0) return prev;
+      const newIdx = idx + direction;
+      if (newIdx < 0 || newIdx >= prev.length) return prev;
+      const items = [...prev];
+      const [moved] = items.splice(idx, 1);
+      items.splice(newIdx, 0, moved);
+      return items;
+    });
+  }, []);
+
+  // Drag and drop state
+  const dragItemRef = useRef(null);
+  const dragOverItemRef = useRef(null);
+  const [dragOverId, setDragOverId] = useState(null);
+
+  const handleDragStart = useCallback((taskId) => {
+    dragItemRef.current = taskId;
+  }, []);
+
+  const handleDragOver = useCallback((e, taskId) => {
+    e.preventDefault();
+    dragOverItemRef.current = taskId;
+    setDragOverId(taskId);
+  }, []);
+
+  const handleDragEnd = useCallback(() => {
+    const fromId = dragItemRef.current;
+    const toId = dragOverItemRef.current;
+    setDragOverId(null);
+    if (!fromId || !toId || fromId === toId) return;
+
+    setTasks((prev) => {
+      const items = [...prev];
+      const fromIdx = items.findIndex((t) => t.id === fromId);
+      const toIdx = items.findIndex((t) => t.id === toId);
+      if (fromIdx < 0 || toIdx < 0) return prev;
+      const [moved] = items.splice(fromIdx, 1);
+      items.splice(toIdx, 0, moved);
+      return items;
+    });
+
+    dragItemRef.current = null;
+    dragOverItemRef.current = null;
+  }, []);
+
+  // Derived
+  const activeTask = tasks.find((t) => t.id === activeTaskId);
+
+  const availableTags = quarterPriorities
+    .filter((p) => p.text.trim())
+    .map((p, i) => ({
+      id: `qp-${p.id}`,
+      label: p.text.trim(),
+      ...(TAG_COLORS[i % TAG_COLORS.length]),
+    }));
+
+  const filteredTasks = tasks.filter((t) => {
+    if (!showDone && t.state === "DONE") return false;
+    if (filterTag && !t.tags.includes(filterTag)) return false;
+    if (filterState && t.state !== filterState) return false;
+    return true;
+  });
+
+  const sortedTasks = filteredTasks;
+
+  const counts = {
+    total: tasks.filter(t => t.state !== "DONE").length,
+    todo: tasks.filter((t) => t.state === "TODO").length,
+    wip: tasks.filter((t) => t.state === "WIP").length,
+    standby: tasks.filter((t) => t.state === "STANDBY").length,
+    done: tasks.filter((t) => t.state === "DONE").length,
+  };
+
+  if (loading) {
+    return (
+      <div style={{ background: "#161818", minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", color: "#6a6562", fontFamily: "'DM Sans', sans-serif" }}>
+        Cargando...
+      </div>
+    );
+  }
+
+  // Focus mode overlay
+  if (focusMode && activeTask) {
+    return (
+      <FocusMode
+        task={activeTask}
+        onUpdate={updateTask}
+        onExit={() => setFocusMode(false)}
+        availableTags={availableTags}
+      />
+    );
+  }
+
+  return (
+    <div style={{ background: "#161818", minHeight: "100vh" }}>
+    <div
+      style={{
+        fontFamily: "'DM Sans', 'Segoe UI', sans-serif",
+        color: "#e4e0db",
+        padding: "32px 40px",
+        maxWidth: 960,
+        margin: "0 auto",
+      }}
+    >
+      {/* Header */}
+      <div style={{ marginBottom: 28 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
+          <div style={{ fontSize: 22, fontWeight: 700, color: "#ece8e3", letterSpacing: -0.3 }}>
+            Command Center
+          </div>
+          <div style={{ flex: 1 }} />
+          <div style={{ color: "#4a4744", fontSize: 13, fontWeight: 600, letterSpacing: 0.5 }}>
+            {counts.total} pendientes
+          </div>
+          <button
+            onClick={() => {
+              if (document.fullscreenElement) {
+                document.exitFullscreen();
+              } else {
+                document.documentElement.requestFullscreen();
+              }
+            }}
+            style={{
+              background: "transparent",
+              border: "1px solid #1e2333",
+              color: "#4a4744",
+              borderRadius: 10,
+              padding: "3px 6px",
+              fontSize: 14,
+              cursor: "pointer",
+              lineHeight: 1,
+              transition: "all 0.15s",
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.borderColor = "#3a3c3c"; e.currentTarget.style.color = "#847f7a"; }}
+            onMouseLeave={(e) => { e.currentTarget.style.borderColor = "#2c2e2e"; e.currentTarget.style.color = "#4a4744"; }}
+            title="Pantalla completa"
+          >
+            ⛶
+          </button>
+        </div>
+        <div style={{ height: 1, background: "linear-gradient(90deg, #f59e0b30, transparent 60%)" }} />
+      </div>
+
+      {/* Quarter Priorities */}
+      <QuarterPriorities priorities={quarterPriorities} onChange={setQuarterPriorities} />
+
+      {/* Active task banner */}
+      {activeTask && (
+        <div
+          style={{
+            background: "#c8a05008",
+            border: "1px solid #f59e0b20",
+            borderRadius: 16,
+            padding: "12px 16px",
+            marginBottom: 20,
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <div style={{ color: "#c8a050", fontSize: 16 }}>◎</div>
+            <div style={{ flex: 1 }}>
+              <div style={{ color: "#c8a05070", fontSize: 12, fontWeight: 700, letterSpacing: 1, textTransform: "uppercase", marginBottom: 2 }}>
+                Foco activo
+              </div>
+              <div style={{ color: "#ece8e3", fontSize: 15, fontWeight: 500 }}>
+                {activeTask.title}
+              </div>
+            </div>
+            <button
+              onClick={() => setFocusMode(true)}
+              style={{
+                background: "#c8a05014",
+                border: "1px solid #f59e0b40",
+                color: "#c8a050",
+                borderRadius: 12,
+                padding: "6px 14px",
+                fontSize: 13,
+                fontWeight: 700,
+                cursor: "pointer",
+                transition: "all 0.15s",
+                whiteSpace: "nowrap",
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = "#c8a05022")}
+              onMouseLeave={(e) => (e.currentTarget.style.background = "#c8a05014")}
+            >
+              Modo Foco
+            </button>
+          </div>
+
+          {/* Subtasks in banner */}
+          {(activeTask.subtasks || []).length > 0 && (
+            <div style={{ marginTop: 10, marginLeft: 28, display: "flex", flexDirection: "column", gap: 3 }}>
+              {(activeTask.subtasks || []).map((sub) => (
+                <div
+                  key={sub.id}
+                  onClick={() => {
+                    const updated = (activeTask.subtasks || []).map((s) =>
+                      s.id === sub.id ? { ...s, done: !s.done } : s
+                    );
+                    const newState = activeTask.state === "TODO" ? "WIP" : activeTask.state;
+                    updateTask({ ...activeTask, subtasks: updated, state: newState });
+                  }}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    cursor: "pointer",
+                    padding: "2px 0",
+                  }}
+                >
+                  <div style={{
+                    width: 13, height: 13, borderRadius: 8, flexShrink: 0,
+                    border: sub.done ? "1px solid #22c55e50" : "1px solid #f59e0b30",
+                    background: sub.done ? "#7aab6a18" : "transparent",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                  }}>
+                    {sub.done && <span style={{ color: "#7aab6a", fontSize: 8, lineHeight: 1 }}>✓</span>}
+                  </div>
+                  <span style={{
+                    fontSize: 14,
+                    color: sub.done ? "#47556980" : "#9a9590",
+                    textDecoration: sub.done ? "line-through" : "none",
+                  }}>
+                    {sub.text}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* View tabs + state filters */}
+      <div style={{ display: "flex", alignItems: "center", marginBottom: 20, borderBottom: "1px solid #1e2333" }}>
+        {[
+          { id: "backlog", label: "Backlog" },
+          { id: "project", label: "Project" },
+        ].map((v) => (
+          <button
+            key={v.id}
+            onClick={() => setViewMode(v.id)}
+            style={{
+              background: "transparent",
+              border: "none",
+              borderBottom: viewMode === v.id ? "2px solid #f59e0b" : "2px solid transparent",
+              color: viewMode === v.id ? "#ece8e3" : "#6a6562",
+              padding: "8px 16px",
+              fontSize: 14,
+              fontWeight: 700,
+              cursor: "pointer",
+              letterSpacing: 0.3,
+              transition: "all 0.15s",
+              marginBottom: -1,
+            }}
+            onMouseEnter={(e) => { if (viewMode !== v.id) e.currentTarget.style.color = "#9a9590"; }}
+            onMouseLeave={(e) => { if (viewMode !== v.id) e.currentTarget.style.color = "#6a6562"; }}
+          >
+            {v.label}
+          </button>
+        ))}
+        <div style={{ flex: 1 }} />
+        <div style={{ display: "flex", gap: 6, marginBottom: -1 }}>
+          {[
+            { label: "todo", count: counts.todo, color: STATE_COLORS.TODO, state: "TODO" },
+            { label: "wip", count: counts.wip, color: STATE_COLORS.WIP, state: "WIP" },
+            { label: "stand by", count: counts.standby, color: STATE_COLORS.STANDBY, state: "STANDBY" },
+            { label: "done", count: counts.done, color: STATE_COLORS.DONE, state: "DONE" },
+          ].map((s) => (
+            <button
+              key={s.state}
+              onClick={() => {
+                if (s.state === "DONE") {
+                  setShowDone(!showDone);
+                  setFilterState(showDone ? null : "DONE");
+                } else {
+                  setFilterState(filterState === s.state ? null : s.state);
+                }
+              }}
+              style={{
+                background: filterState === s.state || (s.state === "DONE" && showDone && filterState === "DONE") ? `${s.color}12` : "transparent",
+                border: "none",
+                borderBottom: filterState === s.state ? `2px solid ${s.color}` : "2px solid transparent",
+                display: "flex",
+                alignItems: "center",
+                gap: 4,
+                padding: "6px 8px",
+                cursor: "pointer",
+                transition: "all 0.15s",
+              }}
+            >
+              <div style={{ width: 6, height: 6, borderRadius: "50%", background: s.color }} />
+              <span style={{ color: "#847f7a", fontSize: 12, fontWeight: 600 }}>{s.label}</span>
+              <span style={{ color: s.color, fontSize: 12, fontWeight: 700 }}>{s.count}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Tag filters - backlog only */}
+      {viewMode === "backlog" && (
+      <div style={{ display: "flex", gap: 6, marginBottom: 20, flexWrap: "wrap" }}>
+        <button
+          onClick={() => setFilterTag(null)}
+          style={{
+            background: filterTag === null ? "#2c2e2e" : "transparent",
+            border: `1px solid ${filterTag === null ? "#3a3c3c" : "#2c2e2e"}`,
+            color: filterTag === null ? "#e4e0db" : "#6a6562",
+            borderRadius: 10,
+            padding: "3px 10px",
+            fontSize: 13,
+            fontWeight: 600,
+            cursor: "pointer",
+            transition: "all 0.15s",
+          }}
+        >
+          Todos
+        </button>
+        {availableTags.map((tag) => (
+          <button
+            key={tag.id}
+            onClick={() => setFilterTag(filterTag === tag.id ? null : tag.id)}
+            style={{
+              background: filterTag === tag.id ? tag.bg : "transparent",
+              border: `1px solid ${filterTag === tag.id ? tag.color + "40" : "#2c2e2e"}`,
+              color: filterTag === tag.id ? tag.color : "#6a6562",
+              borderRadius: 10,
+              padding: "3px 10px",
+              fontSize: 13,
+              fontWeight: 600,
+              cursor: "pointer",
+              transition: "all 0.15s",
+            }}
+          >
+            {tag.label}
+          </button>
+        ))}
+      </div>
+      )}
+
+      {/* === BACKLOG VIEW === */}
+      {viewMode === "backlog" && (
+        <>
+      {/* Task list */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {sortedTasks.length === 0 && (
+          <div style={{ color: "#4a4744", fontSize: 15, textAlign: "center", padding: 40 }}>
+            {tasks.length === 0
+              ? "Añade tu primera tarea para empezar"
+              : "No hay tareas con estos filtros"}
+          </div>
+        )}
+        {sortedTasks.map((task, idx) => (
+          <div
+            key={task.id}
+            onDragOver={(e) => handleDragOver(e, task.id)}
+            style={{
+              opacity: dragOverId === task.id ? 0.5 : 1,
+              transition: "opacity 0.15s",
+            }}
+          >
+            <TaskCard
+              task={task}
+              index={idx + 1}
+              onUpdate={updateTask}
+              onDelete={deleteTask}
+              onSetActive={setActive}
+              isActive={task.id === activeTaskId}
+              availableTags={availableTags}
+              onMoveUp={tasks.indexOf(task) > 0 ? () => moveTask(task.id, -1) : null}
+              onMoveDown={tasks.indexOf(task) < tasks.length - 1 ? () => moveTask(task.id, 1) : null}
+              dragHandleProps={{
+                draggable: true,
+                onDragStart: () => handleDragStart(task.id),
+                onDragEnd: handleDragEnd,
+              }}
+            />
+          </div>
+        ))}
+      </div>
+
+      {/* New task */}
+      <div style={{ marginTop: 8 }}>
+        <NewTaskForm onAdd={addTask} availableTags={availableTags} />
+      </div>
+        </>
+      )}
+
+      {/* === PROJECT VIEW === */}
+      {viewMode === "project" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+          {availableTags.map((tag) => {
+            const projectTasks = tasks
+              .filter((t) => t.tags.includes(tag.id))
+              .filter((t) => {
+                if (!showDone && t.state === "DONE") return false;
+                if (filterState && t.state !== filterState) return false;
+                return true;
+              });
+            const wipCount = projectTasks.filter((t) => t.state === "WIP").length;
+            const todoCount = projectTasks.filter((t) => t.state === "TODO").length;
+            const standbyCount = projectTasks.filter((t) => t.state === "STANDBY").length;
+            const doneCount = tasks.filter((t) => t.tags.includes(tag.id) && t.state === "DONE").length;
+
+            return (
+              <div key={tag.id}>
+                {/* Project header */}
+                <div style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10,
+                  marginBottom: 10,
+                  paddingBottom: 8,
+                  borderBottom: `1px solid ${tag.color}20`,
+                }}>
+                  <div style={{
+                    width: 3,
+                    height: 16,
+                    borderRadius: 2,
+                    background: tag.color,
+                    flexShrink: 0,
+                  }} />
+                  <div style={{
+                    color: tag.color,
+                    fontSize: 15,
+                    fontWeight: 700,
+                  }}>
+                    {tag.label}
+                  </div>
+                  <div style={{ display: "flex", gap: 8, marginLeft: 4 }}>
+                    {wipCount > 0 && (
+                      <span style={{ color: STATE_COLORS.WIP, fontSize: 12, fontWeight: 600 }}>{wipCount} wip</span>
+                    )}
+                    {todoCount > 0 && (
+                      <span style={{ color: STATE_COLORS.TODO, fontSize: 12, fontWeight: 600 }}>{todoCount} todo</span>
+                    )}
+                    {standbyCount > 0 && (
+                      <span style={{ color: STATE_COLORS.STANDBY, fontSize: 12, fontWeight: 600 }}>{standbyCount} stand by</span>
+                    )}
+                    {doneCount > 0 && (
+                      <span style={{ color: STATE_COLORS.DONE, fontSize: 12, fontWeight: 600 }}>{doneCount} done</span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Tasks in this project */}
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  {projectTasks.length === 0 ? (
+                    <div style={{ color: "#2c2e2e", fontSize: 14, padding: "8px 0", fontStyle: "italic" }}>
+                      Sin tareas
+                    </div>
+                  ) : (
+                    projectTasks.map((task, idx) => (
+                      <TaskCard
+                        key={task.id}
+                        task={task}
+                        index={idx + 1}
+                        onUpdate={updateTask}
+                        onDelete={deleteTask}
+                        onSetActive={setActive}
+                        isActive={task.id === activeTaskId}
+                        availableTags={availableTags}
+                        dragHandleProps={{ style: { display: "none" } }}
+                      />
+                    ))
+                  )}
+                </div>
+              </div>
+            );
+          })}
+
+          {/* Untagged tasks */}
+          {(() => {
+            const untagged = tasks
+              .filter((t) => t.tags.length === 0)
+              .filter((t) => {
+                if (!showDone && t.state === "DONE") return false;
+                if (filterState && t.state !== filterState) return false;
+                return true;
+              });
+            if (untagged.length === 0) return null;
+            return (
+              <div>
+                <div style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10,
+                  marginBottom: 10,
+                  paddingBottom: 8,
+                  borderBottom: "1px solid #1e2333",
+                }}>
+                  <div style={{
+                    width: 3,
+                    height: 16,
+                    borderRadius: 2,
+                    background: "#4a4744",
+                    flexShrink: 0,
+                  }} />
+                  <div style={{
+                    color: "#6a6562",
+                    fontSize: 15,
+                    fontWeight: 700,
+                  }}>
+                    Sin proyecto
+                  </div>
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  {untagged.map((task, idx) => (
+                    <TaskCard
+                      key={task.id}
+                      task={task}
+                      index={idx + 1}
+                      onUpdate={updateTask}
+                      onDelete={deleteTask}
+                      onSetActive={setActive}
+                      isActive={task.id === activeTaskId}
+                      availableTags={availableTags}
+                      dragHandleProps={{ style: { display: "none" } }}
+                    />
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
+        </div>
+      )}
+
+      {/* Footer */}
+      {tasks.length > 0 && (
+        <div style={{ marginTop: 32, paddingTop: 16, borderTop: "1px solid #1e233350", textAlign: "center" }}>
+          <button
+            onClick={() => setShowDone(!showDone)}
+            style={{
+              background: "transparent",
+              border: "none",
+              color: "#4a4744",
+              fontSize: 13,
+              cursor: "pointer",
+              transition: "color 0.15s",
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.color = "#847f7a")}
+            onMouseLeave={(e) => (e.currentTarget.style.color = "#4a4744")}
+          >
+            {showDone ? "Ocultar completadas" : `Mostrar completadas (${counts.done})`}
+          </button>
+        </div>
+      )}
+    </div>
+    </div>
+  );
+}
+
+
+ReactDOM.createRoot(document.getElementById("root")).render(<CommandCenter />);
+</script>
+</body>
+</html>

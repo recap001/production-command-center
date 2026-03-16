@@ -121,6 +121,44 @@ const STATE_COLORS = {
 
 const generateId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 
+const DAYS_ES = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"];
+const DAYS_EN = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+
+// Returns "YYYY-MM-DD" in local timezone
+function todayStr() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+}
+
+// Given existing tasks and recurring templates, spawn any due instances
+function spawnRecurringTasks(tasks) {
+  const today = todayStr();
+  const todayDow = new Date().getDay(); // 0=Sun…6=Sat
+  const newTasks = [];
+
+  const templates = tasks.filter(t => t.recurrence && !t.recurrenceParentId);
+  for (const tpl of templates) {
+    if (tpl.recurrence.day !== todayDow) continue;
+    // Already spawned today?
+    const alreadySpawned = tasks.some(
+      t => t.recurrenceParentId === tpl.id && t.spawnedDate === today
+    );
+    if (alreadySpawned) continue;
+    newTasks.push({
+      id: generateId(),
+      title: tpl.title,
+      tags: [...(tpl.tags || [])],
+      subtasks: (tpl.subtasks || []).map(s => ({ ...s, id: generateId(), done: false })),
+      state: "TODO",
+      createdAt: Date.now(),
+      order: Date.now(),
+      recurrenceParentId: tpl.id,
+      spawnedDate: today,
+    });
+  }
+  return newTasks;
+}
+
 // ---- Components ----
 
 function SyncIndicator({ status }) {
@@ -262,6 +300,10 @@ function TaskCard({ task, onUpdate, onDelete, onSetActive, isActive, dragHandleP
             style={{ flex: 1, minWidth: 0, color: task.state === "DONE" ? "#6a6562" : "#e4e0db", fontSize: 15, cursor: "text", textDecoration: task.state === "DONE" ? "line-through" : "none", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", display: "flex", alignItems: "center", gap: 6 }}
           >
             {task.title}
+            {(task.recurrence || task.recurrenceParentId) && (
+              <span title={task.recurrence ? `Recurrente · ${DAYS_ES[task.recurrence.day]}s` : `Instancia recurrente`}
+                style={{ color: "#5a9ea860", fontSize: 11, flexShrink: 0, letterSpacing: 0.5 }}>↻</span>
+            )}
             {hasSubtasks && !expanded && (
               <span style={{ color: doneCount === subtasks.length ? "#7aab6a50" : "#47556980", fontSize: 12, fontWeight: 600, flexShrink: 0 }}>{doneCount}/{subtasks.length}</span>
             )}
@@ -392,6 +434,9 @@ function NewTaskForm({ onAdd, availableTags }) {
   const [tags, setTags] = useState([]);
   const [subtasks, setSubtasks] = useState([]);
   const [newSub, setNewSub] = useState("");
+  const [recurrenceDay, setRecurrenceDay] = useState(null); // null = no recurrence, 0-6 = day of week
+  const [recurrenceOpen, setRecurrenceOpen] = useState(false);
+  const recurrenceRef = useRef(null);
   const inputRef = useRef(null);
   const formRef = useRef(null);
   const subInputRef = useRef(null);
@@ -400,17 +445,26 @@ function NewTaskForm({ onAdd, availableTags }) {
     if (!open) return;
     const handler = (e) => {
       if (formRef.current && !formRef.current.contains(e.target)) {
-        setOpen(false); setTitle(""); setTags([]); setSubtasks([]); setNewSub("");
+        setOpen(false); setTitle(""); setTags([]); setSubtasks([]); setNewSub(""); setRecurrenceDay(null);
       }
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, [open]);
 
+  useEffect(() => {
+    if (!recurrenceOpen) return;
+    const handler = (e) => { if (recurrenceRef.current && !recurrenceRef.current.contains(e.target)) setRecurrenceOpen(false); };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [recurrenceOpen]);
+
   const handleSubmit = () => {
     if (!title.trim()) return;
-    onAdd({ id: generateId(), title: title.trim(), tags, subtasks, state: "TODO", createdAt: Date.now(), order: Date.now() });
-    setTitle(""); setTags([]); setSubtasks([]); setNewSub("");
+    const base = { id: generateId(), title: title.trim(), tags, subtasks, state: "TODO", createdAt: Date.now(), order: Date.now() };
+    if (recurrenceDay !== null) base.recurrence = { day: recurrenceDay };
+    onAdd(base);
+    setTitle(""); setTags([]); setSubtasks([]); setNewSub(""); setRecurrenceDay(null);
     inputRef.current?.focus();
   };
 
@@ -438,12 +492,41 @@ function NewTaskForm({ onAdd, availableTags }) {
         placeholder="¿Qué necesitas hacer?"
         style={{ background: "#161818", border: "1px solid #1e2333", borderRadius: 12, color: "#e4e0db", padding: "8px 12px", fontSize: 15, fontFamily: "inherit", outline: "none" }}
       />
-      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
         {availableTags.map((tag) => (
           <button key={tag.id} onClick={() => toggleTag(tag.id)}
             style={{ background: tags.includes(tag.id) ? tag.bg : "transparent", border: `1px solid ${tags.includes(tag.id) ? tag.color + "50" : "#2c2e2e"}`, color: tags.includes(tag.id) ? tag.color : "#6a6562", borderRadius: 10, padding: "3px 8px", fontSize: 13, fontWeight: 600, cursor: "pointer", transition: "all 0.15s" }}
           >{tag.label}</button>
         ))}
+
+        {/* Recurrence picker */}
+        <div ref={recurrenceRef} style={{ position: "relative", marginLeft: "auto" }}>
+          <button onClick={() => setRecurrenceOpen(!recurrenceOpen)}
+            style={{ background: recurrenceDay !== null ? "#5a9ea815" : "transparent", border: `1px solid ${recurrenceDay !== null ? "#5a9ea840" : "#2c2e2e"}`, color: recurrenceDay !== null ? "#5a9ea8" : "#4a4744", borderRadius: 10, padding: "3px 10px", fontSize: 12, fontWeight: 600, cursor: "pointer", transition: "all 0.15s", display: "flex", alignItems: "center", gap: 5, whiteSpace: "nowrap" }}
+            onMouseEnter={(e) => { if (recurrenceDay === null) { e.currentTarget.style.borderColor = "#3a3c3c"; e.currentTarget.style.color = "#6a6562"; }}}
+            onMouseLeave={(e) => { if (recurrenceDay === null) { e.currentTarget.style.borderColor = "#2c2e2e"; e.currentTarget.style.color = "#4a4744"; }}}
+          >
+            <span style={{ fontSize: 11 }}>↻</span>
+            {recurrenceDay !== null ? `${DAYS_ES[recurrenceDay]}s` : "Recurrente"}
+          </button>
+          {recurrenceOpen && (
+            <div style={{ position: "absolute", top: "calc(100% + 4px)", right: 0, background: "#282a2a", border: "1px solid #1e2333", borderRadius: 12, padding: 4, zIndex: 50, minWidth: 140, boxShadow: "0 12px 32px #00000050" }}>
+              <button onClick={() => { setRecurrenceDay(null); setRecurrenceOpen(false); }}
+                style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", textAlign: "left", background: recurrenceDay === null ? "#1e233380" : "transparent", border: "none", color: recurrenceDay === null ? "#e4e0db" : "#6a6562", padding: "5px 10px", fontSize: 13, fontWeight: 600, cursor: "pointer", borderRadius: 10 }}
+              >Sin recurrencia</button>
+              <div style={{ height: 1, background: "#1e2333", margin: "4px 6px" }} />
+              {DAYS_ES.map((day, i) => (
+                <button key={i} onClick={() => { setRecurrenceDay(i); setRecurrenceOpen(false); }}
+                  style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", textAlign: "left", background: recurrenceDay === i ? "#5a9ea815" : "transparent", border: "none", color: recurrenceDay === i ? "#5a9ea8" : "#9a9590", padding: "5px 10px", fontSize: 13, fontWeight: 600, cursor: "pointer", borderRadius: 10, transition: "background 0.1s" }}
+                  onMouseEnter={(e) => { if (recurrenceDay !== i) e.currentTarget.style.background = "#1e233380"; }}
+                  onMouseLeave={(e) => { if (recurrenceDay !== i) e.currentTarget.style.background = "transparent"; }}
+                >
+                  {day}s
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
         {subtasks.map((sub) => (
@@ -478,7 +561,7 @@ function NewTaskForm({ onAdd, availableTags }) {
         <button onClick={handleSubmit} disabled={!title.trim()}
           style={{ background: title.trim() ? "#c8a050" : "#2c2e2e", border: "none", borderRadius: 12, color: title.trim() ? "#161818" : "#4a4744", padding: "6px 16px", fontSize: 14, fontWeight: 700, cursor: title.trim() ? "pointer" : "default", transition: "all 0.15s" }}
         >Añadir</button>
-        <button onClick={() => { setOpen(false); setTitle(""); setTags([]); setSubtasks([]); setNewSub(""); }}
+        <button onClick={() => { setOpen(false); setTitle(""); setTags([]); setSubtasks([]); setNewSub(""); setRecurrenceDay(null); }}
           style={{ background: "transparent", border: "1px solid #1e2333", borderRadius: 12, color: "#6a6562", padding: "6px 12px", fontSize: 14, cursor: "pointer" }}
         >Cancelar</button>
       </div>
@@ -650,12 +733,17 @@ function CommandCenter() {
         ]);
         const tasks = remoteTasks.length > 0 ? remoteTasks : loadTasksLocal();
         const priorities = remotePriorities.length > 0 ? remotePriorities : loadPrioritiesLocal();
-        setTasks(tasks);
+        // Spawn any due recurring tasks at top of backlog
+        const spawned = spawnRecurringTasks(tasks);
+        const finalTasks = spawned.length > 0 ? [...spawned, ...tasks] : tasks;
+        setTasks(finalTasks);
         setQuarterPriorities(priorities);
         setSyncStatus("ok");
       } catch (err) {
         console.warn("Supabase load failed, using localStorage:", err);
-        setTasks(loadTasksLocal());
+        const localTasks = loadTasksLocal();
+        const spawned = spawnRecurringTasks(localTasks);
+        setTasks(spawned.length > 0 ? [...spawned, ...localTasks] : localTasks);
         setQuarterPriorities(loadPrioritiesLocal());
         setSyncStatus("error");
       } finally {

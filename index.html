@@ -43,19 +43,19 @@ const sbFetch = async (path, options = {}) => {
 
 // Tasks: one row per task, id = task.id
 async function loadTasksRemote() {
-  const rows = await sbFetch("tasks?order=created_at.asc&select=id,data");
+  const rows = await sbFetch("tasks?order=position.asc&select=id,data");
   return rows.map(r => r.data);
 }
 
 async function saveTasksRemote(tasks) {
-  // Upsert all tasks in one call
-  const rows = tasks.map(t => ({ id: t.id, data: t }));
+  // Upsert all tasks with explicit position
+  const rows = tasks.map((t, i) => ({ id: t.id, data: t, position: i }));
   await sbFetch("tasks", {
     method: "POST",
     headers: { "Prefer": "resolution=merge-duplicates,return=minimal" },
     body: JSON.stringify(rows),
   });
-  // Delete removed tasks: fetch existing ids, diff, delete orphans
+  // Delete removed tasks
   const existing = await sbFetch("tasks?select=id");
   const currentIds = new Set(tasks.map(t => t.id));
   const toDelete = existing.filter(r => !currentIds.has(r.id)).map(r => r.id);
@@ -834,6 +834,7 @@ function CommandCenter() {
     .map((p, i) => ({ id: `qp-${p.id}`, label: p.text.trim(), ...(TAG_COLORS[i % TAG_COLORS.length]) }));
 
   const filteredTasks = tasks.filter((t) => {
+    if (t.recurrence && !t.recurrenceParentId) return false; // templates hidden from backlog
     if (!showDone && t.state === "DONE") return false;
     if (filterTag && !t.tags.includes(filterTag)) return false;
     if (filterState && t.state !== filterState) return false;
@@ -921,7 +922,7 @@ function CommandCenter() {
 
       {/* View tabs + state filters */}
       <div style={{ display: "flex", alignItems: "center", marginBottom: 20, borderBottom: "1px solid #1e2333" }}>
-        {[{ id: "backlog", label: "Backlog" }, { id: "project", label: "Project" }].map((v) => (
+        {[{ id: "backlog", label: "Backlog" }, { id: "project", label: "Project" }, { id: "recurrentes", label: "Recurrentes" }].map((v) => (
           <button key={v.id} onClick={() => setViewMode(v.id)}
             style={{ background: "transparent", border: "none", borderBottom: viewMode === v.id ? "2px solid #f59e0b" : "2px solid transparent", color: viewMode === v.id ? "#ece8e3" : "#6a6562", padding: "8px 16px", fontSize: 14, fontWeight: 700, cursor: "pointer", letterSpacing: 0.3, transition: "all 0.15s", marginBottom: -1 }}
             onMouseEnter={(e) => { if (viewMode !== v.id) e.currentTarget.style.color = "#9a9590"; }}
@@ -1048,6 +1049,98 @@ function CommandCenter() {
           })()}
         </div>
       )}
+
+      {/* RECURRENTES VIEW */}
+      {viewMode === "recurrentes" && (() => {
+        const templates = tasks.filter(t => t.recurrence && !t.recurrenceParentId);
+        return (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {templates.length === 0 && (
+              <div style={{ color: "#4a4744", fontSize: 15, textAlign: "center", padding: 40 }}>
+                Ninguna tarea recurrente todavía — créala desde el backlog con el selector ↻
+              </div>
+            )}
+            {templates.map((task, idx) => (
+              <div key={task.id} style={{
+                background: "#1e2020",
+                border: "1px solid #1e2333",
+                borderRadius: 14,
+                padding: "0 18px",
+                height: 54,
+                display: "flex",
+                alignItems: "center",
+                gap: 12,
+                transition: "border-color 0.15s",
+              }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.borderColor = "#3a3c3c";
+                  const del = e.currentTarget.querySelector("[data-tpl-delete]");
+                  if (del) del.style.opacity = "1";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.borderColor = "#2c2e2e";
+                  const del = e.currentTarget.querySelector("[data-tpl-delete]");
+                  if (del) del.style.opacity = "0";
+                }}
+              >
+                {/* Day pill */}
+                <div style={{
+                  background: "#5a9ea815",
+                  border: "1px solid #5a9ea830",
+                  color: "#5a9ea8",
+                  borderRadius: 10,
+                  padding: "2px 10px",
+                  fontSize: 12,
+                  fontWeight: 700,
+                  flexShrink: 0,
+                  whiteSpace: "nowrap",
+                  letterSpacing: 0.3,
+                }}>
+                  ↻ {DAYS_ES[task.recurrence.day]}s
+                </div>
+
+                {/* Title */}
+                <div style={{ flex: 1, color: "#e4e0db", fontSize: 15, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                  {task.title}
+                </div>
+
+                {/* Tags */}
+                <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
+                  {task.tags.map(t => <TagBadge key={t} tagId={t} small availableTags={availableTags} />)}
+                </div>
+
+                {/* Next spawn date */}
+                {(() => {
+                  const today = new Date();
+                  const todayDow = today.getDay();
+                  const targetDow = task.recurrence.day;
+                  let daysUntil = (targetDow - todayDow + 7) % 7;
+                  if (daysUntil === 0) daysUntil = 7; // already spawned today, next is in 7
+                  const alreadyToday = tasks.some(t => t.recurrenceParentId === task.id && t.spawnedDate === todayStr());
+                  const label = alreadyToday ? "hoy ✓" : daysUntil === 7 ? "próx. semana" : `en ${daysUntil}d`;
+                  return (
+                    <span style={{ color: alreadyToday ? "#7aab6a" : "#4a4744", fontSize: 12, fontWeight: 600, flexShrink: 0 }}>
+                      {label}
+                    </span>
+                  );
+                })()}
+
+                {/* Delete template */}
+                <button data-tpl-delete onClick={() => deleteTask(task.id)}
+                  style={{ background: "transparent", border: "none", color: "#4a4744", cursor: "pointer", fontSize: 12, padding: "2px 4px", opacity: 0, transition: "opacity 0.15s, color 0.15s", flexShrink: 0 }}
+                  onMouseEnter={(e) => (e.currentTarget.style.color = "#b85a50")}
+                  onMouseLeave={(e) => (e.currentTarget.style.color = "#4a4744")}
+                >✕</button>
+              </div>
+            ))}
+
+            {/* Add new recurring task shortcut */}
+            <div style={{ marginTop: 8 }}>
+              <NewTaskForm onAdd={addTask} availableTags={availableTags} />
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Footer */}
       {tasks.length > 0 && (

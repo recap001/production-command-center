@@ -23,6 +23,9 @@ const { useState, useEffect, useCallback, useRef } = React;
 const SUPABASE_URL = "https://hbqgdqdwgiluknlfhdws.supabase.co";
 const SUPABASE_KEY = "sb_publishable_WfLWUcjmNRVkBdWHHla_Ig__BbmQnRm";
 
+// ---- PIN config — cámbialo por el que quieras ----
+const APP_PIN = "4665";
+
 const sbFetch = async (path, options = {}) => {
   const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
     ...options,
@@ -748,6 +751,73 @@ function FocusMode({ task, onUpdate, onExit, availableTags }) {
   );
 }
 
+// ---- PIN Gate ----
+function PinGate({ children }) {
+  const SESSION_KEY = "cc_unlocked";
+  const [unlocked, setUnlocked] = useState(() => sessionStorage.getItem(SESSION_KEY) === "1");
+  const [input, setInput] = useState("");
+  const [shake, setShake] = useState(false);
+  const inputRef = useRef(null);
+
+  useEffect(() => { if (!unlocked) setTimeout(() => inputRef.current?.focus(), 100); }, [unlocked]);
+
+  const attempt = () => {
+    if (input === APP_PIN) {
+      sessionStorage.setItem(SESSION_KEY, "1");
+      setUnlocked(true);
+    } else {
+      setShake(true);
+      setInput("");
+      setTimeout(() => { setShake(false); inputRef.current?.focus(); }, 500);
+    }
+  };
+
+  if (unlocked) return children;
+
+  return (
+    <div style={{ background: "#161818", minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", fontFamily: "'DM Sans', sans-serif" }}>
+      <style>{`
+        @keyframes shake {
+          0%,100% { transform: translateX(0); }
+          20%,60% { transform: translateX(-8px); }
+          40%,80% { transform: translateX(8px); }
+        }
+        .pin-shake { animation: shake 0.4s ease; }
+      `}</style>
+      <div style={{ position: "fixed", top: "35%", left: "50%", transform: "translate(-50%,-50%)", width: 400, height: 400, background: "radial-gradient(circle, #c8a05008 0%, transparent 70%)", pointerEvents: "none" }} />
+      <div style={{ color: "#4a4744", fontSize: 12, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase", marginBottom: 32 }}>Command Center</div>
+      <div className={shake ? "pin-shake" : ""} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 16, width: 280 }}>
+        <input
+          ref={inputRef}
+          type="password"
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") attempt(); }}
+          placeholder="PIN"
+          style={{
+            width: "100%", background: "#1e2020",
+            border: `1px solid ${shake ? "#c47048" : "#2c2e2e"}`,
+            borderRadius: 14, color: "#e4e0db", padding: "12px 18px",
+            fontSize: 20, fontFamily: "inherit", outline: "none",
+            textAlign: "center", letterSpacing: 6, transition: "border-color 0.2s",
+          }}
+          onFocus={(e) => { if (!shake) e.target.style.borderColor = "#3a3c3c"; }}
+          onBlur={(e) => { if (!shake) e.target.style.borderColor = "#2c2e2e"; }}
+        />
+        <button onClick={attempt} disabled={!input}
+          style={{
+            width: "100%", background: input ? "#c8a050" : "#1e2020",
+            border: `1px solid ${input ? "#c8a050" : "#2c2e2e"}`,
+            borderRadius: 14, color: input ? "#161818" : "#4a4744",
+            padding: "11px 18px", fontSize: 14, fontWeight: 700,
+            cursor: input ? "pointer" : "default", transition: "all 0.2s", letterSpacing: 0.5,
+          }}
+        >Entrar</button>
+      </div>
+    </div>
+  );
+}
+
 // ---- Main App ----
 function CommandCenter() {
   const [tasks, setTasks] = useState([]);
@@ -1311,7 +1381,7 @@ function CommandCenter() {
   );
 }
 
-ReactDOM.createRoot(document.getElementById("root")).render(<CommandCenter />);
+ReactDOM.createRoot(document.getElementById("root")).render(<PinGate><CommandCenter /></PinGate>);
 </script>
 </body>
 </html>

@@ -85,6 +85,26 @@ async function savePrioritiesRemote(priorities) {
   }
 }
 
+
+async function loadChecklistRemote() {
+  const rows = await sbFetch("checklist_items?order=position.asc&select=id,data");
+  return rows.map(r => r.data);
+}
+
+async function saveChecklistRemote(items) {
+  const rows = items.map((item, i) => ({ id: item.id, data: item, position: i }));
+  await sbFetch("checklist_items", {
+    method: "POST",
+    headers: { "Prefer": "resolution=merge-duplicates,return=minimal" },
+    body: JSON.stringify(rows),
+  });
+  const existing = await sbFetch("checklist_items?select=id");
+  const currentIds = new Set(items.map(i => i.id));
+  const toDelete = existing.filter(r => !currentIds.has(r.id)).map(r => r.id);
+  if (toDelete.length > 0) {
+    await sbFetch(`checklist_items?id=in.(${toDelete.join(",")})`, { method: "DELETE" });
+  }
+}
 // ---- localStorage fallback ----
 function loadTasksLocal() {
   try { const r = localStorage.getItem("producer-tasks"); return r ? JSON.parse(r) : []; }
@@ -728,6 +748,21 @@ function CommandCenter() {
   const [showDone, setShowDone] = useState(false);
   const [focusMode, setFocusMode] = useState(false);
   const [viewMode, setViewMode] = useState("backlog");
+  const [checklistItems, setChecklistItems] = useState([]);
+  const [newCheckItem, setNewCheckItem] = useState("");
+  const checkInputRef = React.useRef(null);
+
+
+
+  const addCheckItem = () => {
+    if (!newCheckItem.trim()) return;
+    setChecklistItems(prev => [...prev, { id: generateId(), text: newCheckItem.trim(), done: false }]);
+    setNewCheckItem("");
+    checkInputRef.current?.focus();
+  };
+  const toggleCheckItem = (id) => setChecklistItems(prev => prev.map(i => i.id === id ? { ...i, done: !i.done } : i));
+  const deleteCheckItem = (id) => setChecklistItems(prev => prev.filter(i => i.id !== id));
+  const clearDoneItems = () => setChecklistItems(prev => prev.filter(i => !i.done));
 
   const syncTimeoutRef = useRef(null);
 
@@ -736,9 +771,10 @@ function CommandCenter() {
     const init = async () => {
       setSyncStatus("syncing");
       try {
-        const [remoteTasks, remotePriorities] = await Promise.all([
+        const [remoteTasks, remotePriorities, remoteChecklist] = await Promise.all([
           loadTasksRemote(),
           loadPrioritiesRemote(),
+          loadChecklistRemote(),
         ]);
         const tasks = remoteTasks.length > 0 ? remoteTasks : loadTasksLocal();
         const priorities = remotePriorities.length > 0 ? remotePriorities : loadPrioritiesLocal();
@@ -746,6 +782,7 @@ function CommandCenter() {
         const spawned = spawnRecurringTasks(tasks);
         const finalTasks = spawned.length > 0 ? [...spawned, ...tasks] : tasks;
         setTasks(finalTasks);
+        setChecklistItems(remoteChecklist);
         setQuarterPriorities(priorities);
         setSyncStatus("ok");
       } catch (err) {
@@ -763,7 +800,7 @@ function CommandCenter() {
   }, []);
 
   // Debounced save — always saves locally immediately, Supabase after 800ms
-  const scheduleSave = useCallback((newTasks, newPriorities) => {
+  const scheduleSave = useCallback((newTasks, newPriorities, newChecklist) => {
     saveTasksLocal(newTasks);
     savePrioritiesLocal(newPriorities);
     if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
@@ -773,6 +810,7 @@ function CommandCenter() {
         await Promise.all([
           saveTasksRemote(newTasks),
           savePrioritiesRemote(newPriorities),
+          saveChecklistRemote(newChecklist),
         ]);
         setSyncStatus("ok");
       } catch (err) {
@@ -783,8 +821,8 @@ function CommandCenter() {
   }, []);
 
   useEffect(() => {
-    if (!loading) scheduleSave(tasks, quarterPriorities);
-  }, [tasks, quarterPriorities, loading]);
+    if (!loading) scheduleSave(tasks, quarterPriorities, checklistItems);
+  }, [tasks, quarterPriorities, checklistItems, loading]);
 
   useEffect(() => {
     const handler = (e) => { if (e.key === "Escape") setFocusMode(false); };
@@ -931,7 +969,7 @@ function CommandCenter() {
 
       {/* View tabs + state filters */}
       <div style={{ display: "flex", alignItems: "center", marginBottom: 20, borderBottom: "1px solid #1e2333" }}>
-        {[{ id: "backlog", label: "Backlog" }, { id: "project", label: "Project" }, { id: "recurrentes", label: "Recurrentes" }].map((v) => (
+        {[{ id: "backlog", label: "Backlog" }, { id: "project", label: "Project" }, { id: "recurrentes", label: "Recurrentes" }, { id: "tools", label: "Tools" }].map((v) => (
           <button key={v.id} onClick={() => setViewMode(v.id)}
             style={{ background: "transparent", border: "none", borderBottom: viewMode === v.id ? "2px solid #f59e0b" : "2px solid transparent", color: viewMode === v.id ? "#ece8e3" : "#6a6562", padding: "8px 16px", fontSize: 14, fontWeight: 700, cursor: "pointer", letterSpacing: 0.3, transition: "all 0.15s", marginBottom: -1 }}
             onMouseEnter={(e) => { if (viewMode !== v.id) e.currentTarget.style.color = "#9a9590"; }}
@@ -1151,6 +1189,60 @@ function CommandCenter() {
         );
       })()}
 
+
+      {/* TOOLS VIEW */}
+      {viewMode === "tools" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          {checklistItems.length === 0 && newCheckItem === "" && (
+            <div style={{ color: "#4a4744", fontSize: 15, textAlign: "center", padding: "32px 0" }}>
+              Lista vacía — añade tu primer item abajo
+            </div>
+          )}
+          {checklistItems.map(item => (
+            <div key={item.id}
+              style={{ display: "flex", alignItems: "center", gap: 10, background: "#1e2020", border: "1px solid #2c2e2e", borderRadius: 12, padding: "10px 14px", transition: "border-color 0.15s" }}
+              onMouseEnter={(e) => { e.currentTarget.style.borderColor = "#3a3c3c"; const d = e.currentTarget.querySelector("[data-chk-del]"); if (d) d.style.opacity = "1"; }}
+              onMouseLeave={(e) => { e.currentTarget.style.borderColor = "#2c2e2e"; const d = e.currentTarget.querySelector("[data-chk-del]"); if (d) d.style.opacity = "0"; }}
+            >
+              <button onClick={() => toggleCheckItem(item.id)}
+                style={{ width: 16, height: 16, borderRadius: 8, border: item.done ? "1px solid #7aab6a50" : "1px solid #3a3c3c", background: item.done ? "#7aab6a18" : "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, padding: 0, transition: "all 0.15s" }}
+              >
+                {item.done && <span style={{ color: "#7aab6a", fontSize: 10, lineHeight: 1 }}>✓</span>}
+              </button>
+              <span style={{ flex: 1, fontSize: 15, color: item.done ? "#4a4744" : "#e4e0db", textDecoration: item.done ? "line-through" : "none", transition: "all 0.15s" }}>{item.text}</span>
+              <button data-chk-del onClick={() => deleteCheckItem(item.id)}
+                style={{ background: "transparent", border: "none", color: "#4a4744", cursor: "pointer", fontSize: 12, padding: "2px 4px", opacity: 0, transition: "opacity 0.15s, color 0.15s", flexShrink: 0 }}
+                onMouseEnter={(e) => e.currentTarget.style.color = "#b85a50"}
+                onMouseLeave={(e) => e.currentTarget.style.color = "#4a4744"}
+              >✕</button>
+            </div>
+          ))}
+
+          {/* Input row */}
+          <div style={{ display: "flex", alignItems: "center", gap: 10, background: "#1e2020", border: "1px dashed #2c2e2e", borderRadius: 12, padding: "10px 14px", transition: "border-color 0.15s" }}
+            onFocus={(e) => e.currentTarget.style.borderColor = "#3a3c3c"}
+            onBlur={(e) => e.currentTarget.style.borderColor = "#2c2e2e"}
+          >
+            <div style={{ width: 16, height: 16, borderRadius: 8, border: "1px dashed #3a3c3c", flexShrink: 0 }} />
+            <input ref={checkInputRef} value={newCheckItem} onChange={(e) => setNewCheckItem(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") addCheckItem(); }}
+              placeholder="+ Añadir item"
+              style={{ flex: 1, background: "transparent", border: "none", color: "#e4e0db", fontSize: 15, fontFamily: "inherit", outline: "none", padding: 0 }}
+            />
+          </div>
+
+          {/* Clear done */}
+          {checklistItems.some(i => i.done) && (
+            <div style={{ textAlign: "center", marginTop: 8 }}>
+              <button onClick={clearDoneItems}
+                style={{ background: "transparent", border: "none", color: "#4a4744", fontSize: 13, cursor: "pointer", transition: "color 0.15s" }}
+                onMouseEnter={(e) => e.currentTarget.style.color = "#847f7a"}
+                onMouseLeave={(e) => e.currentTarget.style.color = "#4a4744"}
+              >Limpiar completados</button>
+            </div>
+          )}
+        </div>
+      )}
       {/* Footer */}
       {tasks.length > 0 && (
         <div style={{ marginTop: 32, paddingTop: 16, borderTop: "1px solid #1e233350", textAlign: "center" }}>

@@ -319,7 +319,7 @@ function TaskCard({ task, onUpdate, onDelete, onSetActive, isActive, dragHandleP
           </div>
         )}
 
-        <div ref={dropdownRef} style={{ position: "relative", flexShrink: 0, width: 80 }}>
+        <div ref={dropdownRef} style={{ position: "relative", flexShrink: 0, width: 95 }}>
           <button onClick={() => setStateOpen(!stateOpen)}
             style={{ background: `${STATE_COLORS[task.state]}12`, border: `1px solid ${STATE_COLORS[task.state]}30`, color: STATE_COLORS[task.state], borderRadius: 10, padding: "3px 8px", fontSize: 12, fontWeight: 700, cursor: "pointer", letterSpacing: 0.5, transition: "all 0.15s", whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 4, width: "100%", justifyContent: "space-between" }}
           >
@@ -530,7 +530,7 @@ function NewTaskForm({ onAdd, availableTags }) {
                   onMouseEnter={(e) => { if (recurrenceDay !== i) e.currentTarget.style.background = "#1e233380"; }}
                   onMouseLeave={(e) => { if (recurrenceDay !== i) e.currentTarget.style.background = "transparent"; }}
                 >
-                  {day}s
+                  {day}
                 </button>
               ))}
             </div>
@@ -600,9 +600,9 @@ function QuarterPriorities({ priorities, onChange }) {
   };
 
   return (
-    <div style={{ background: "#1c1e1e", border: "1px solid #1e2333", borderRadius: 16, padding: "16px 20px", marginBottom: 28 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-        <div style={{ color: "#6a6562", fontSize: 12, fontWeight: 700, letterSpacing: 1.5, textTransform: "uppercase" }}>Prioridades del quarter</div>
+    <div style={{ background: "#1c1e1e", border: "1px solid #1e2333", borderRadius: 16, padding: "10px 16px", marginBottom: 16 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+        <div style={{ color: "#6a6562", fontSize: 12, fontWeight: 700, letterSpacing: 1.5, textTransform: "uppercase" }}>Prioridades</div>
         <div style={{ flex: 1 }} />
         <button onClick={addRow}
           style={{ background: "transparent", border: "none", color: "#4a4744", fontSize: 16, cursor: "pointer", padding: "0 4px", lineHeight: 1, transition: "color 0.15s" }}
@@ -611,9 +611,9 @@ function QuarterPriorities({ priorities, onChange }) {
           title="Añadir prioridad"
         >+</button>
       </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
         {priorities.map((p, idx) => (
-          <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 0", borderRadius: 10 }}
+          <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "2px 0", borderRadius: 10 }}
             onMouseEnter={(e) => { const del = e.currentTarget.querySelector("[data-delete]"); if (del) del.style.opacity = "1"; }}
             onMouseLeave={(e) => { const del = e.currentTarget.querySelector("[data-delete]"); if (del) del.style.opacity = "0"; }}
           >
@@ -877,9 +877,9 @@ function CommandCenter() {
     <div style={{ fontFamily: "'DM Sans', 'Segoe UI', sans-serif", color: "#e4e0db", padding: "32px 40px", maxWidth: 1200, margin: "0 auto" }}>
 
       {/* Header */}
-      <div style={{ marginBottom: 28 }}>
+      <div style={{ marginBottom: 16 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
-          <div style={{ fontSize: 22, fontWeight: 700, color: "#ece8e3", letterSpacing: -0.3 }}>Command Center</div>
+          <div style={{ fontSize: 17, fontWeight: 700, color: "#ece8e3", letterSpacing: -0.3 }}>Command Center</div>
           <div style={{ flex: 1 }} />
           <SyncIndicator status={syncStatus} />
           <div style={{ color: "#4a4744", fontSize: 13, fontWeight: 600, letterSpacing: 0.5 }}>{counts.total} pendientes</div>

@@ -123,6 +123,7 @@ const STATE_COLORS = {
 const generateId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 
 const DAYS_ES = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"];
+const DAYS_ES_PLURAL = ["Domingos", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábados"];
 const DAYS_EN = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
 
 // Returns "YYYY-MM-DD" in local timezone
@@ -134,17 +135,24 @@ function todayStr() {
 // Given existing tasks and recurring templates, spawn any due instances
 function spawnRecurringTasks(tasks) {
   const today = todayStr();
-  const todayDow = new Date().getDay(); // 0=Sun…6=Sat
+  const todayDate = new Date();
   const newTasks = [];
 
   const templates = tasks.filter(t => t.recurrence && !t.recurrenceParentId);
   for (const tpl of templates) {
-    if (tpl.recurrence.day !== todayDow) continue;
-    // Already spawned today?
-    const alreadySpawned = tasks.some(
-      t => t.recurrenceParentId === tpl.id && t.spawnedDate === today
-    );
-    if (alreadySpawned) continue;
+    // Find the most recent instance for this template
+    const instances = tasks
+      .filter(t => t.recurrenceParentId === tpl.id && t.spawnedDate)
+      .sort((a, b) => b.spawnedDate.localeCompare(a.spawnedDate));
+    const lastInstance = instances[0];
+
+    if (lastInstance) {
+      // If spawned in the last 7 days, skip - it is still this week's instance
+      const lastDate = new Date(lastInstance.spawnedDate);
+      const daysSince = Math.floor((todayDate - lastDate) / (1000 * 60 * 60 * 24));
+      if (daysSince < 7) continue;
+    }
+
     newTasks.push({
       id: generateId(),
       title: tpl.title,
@@ -302,7 +310,7 @@ function TaskCard({ task, onUpdate, onDelete, onSetActive, isActive, dragHandleP
           >
             {task.title}
             {(task.recurrence || task.recurrenceParentId) && (
-              <span title={task.recurrence ? `Recurrente · ${DAYS_ES[task.recurrence.day]}s` : `Instancia recurrente`}
+              <span title={task.recurrence ? `Recurrente · ${DAYS_ES_PLURAL[task.recurrence.day]}` : `Instancia recurrente`}
                 style={{ color: "#5a9ea860", fontSize: 11, flexShrink: 0, letterSpacing: 0.5 }}>↻</span>
             )}
             {hasSubtasks && !expanded && (
@@ -311,7 +319,7 @@ function TaskCard({ task, onUpdate, onDelete, onSetActive, isActive, dragHandleP
           </div>
         )}
 
-        <div ref={dropdownRef} style={{ position: "relative", flexShrink: 0, width: 90 }}>
+        <div ref={dropdownRef} style={{ position: "relative", flexShrink: 0, width: 80 }}>
           <button onClick={() => setStateOpen(!stateOpen)}
             style={{ background: `${STATE_COLORS[task.state]}12`, border: `1px solid ${STATE_COLORS[task.state]}30`, color: STATE_COLORS[task.state], borderRadius: 10, padding: "3px 8px", fontSize: 12, fontWeight: 700, cursor: "pointer", letterSpacing: 0.5, transition: "all 0.15s", whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 4, width: "100%", justifyContent: "space-between" }}
           >
@@ -335,7 +343,7 @@ function TaskCard({ task, onUpdate, onDelete, onSetActive, isActive, dragHandleP
           )}
         </div>
 
-        <div ref={tagDropdownRef} style={{ position: "relative", flexShrink: 0, width: 120 }}>
+        <div ref={tagDropdownRef} style={{ position: "relative", flexShrink: 0, width: 100 }}>
           <div onClick={() => setTagsOpen(!tagsOpen)} style={{ display: "flex", gap: 4, alignItems: "center", cursor: "pointer", overflow: "hidden", height: "100%" }}>
             {task.tags.length > 0
               ? task.tags.map((t) => <TagBadge key={t} tagId={t} small availableTags={availableTags} />)
@@ -508,7 +516,7 @@ function NewTaskForm({ onAdd, availableTags }) {
             onMouseLeave={(e) => { if (recurrenceDay === null) { e.currentTarget.style.borderColor = "#2c2e2e"; e.currentTarget.style.color = "#4a4744"; }}}
           >
             <span style={{ fontSize: 11 }}>↻</span>
-            {recurrenceDay !== null ? `${DAYS_ES[recurrenceDay]}s` : "Recurrente"}
+            {recurrenceDay !== null ? `${DAYS_ES_PLURAL[recurrenceDay]}` : "Recurrente"}
           </button>
           {recurrenceOpen && (
             <div style={{ position: "absolute", top: "calc(100% + 4px)", right: 0, background: "#282a2a", border: "1px solid #1e2333", borderRadius: 12, padding: 4, zIndex: 50, minWidth: 140, boxShadow: "0 12px 32px #00000050" }}>
@@ -516,7 +524,7 @@ function NewTaskForm({ onAdd, availableTags }) {
                 style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", textAlign: "left", background: recurrenceDay === null ? "#1e233380" : "transparent", border: "none", color: recurrenceDay === null ? "#e4e0db" : "#6a6562", padding: "5px 10px", fontSize: 13, fontWeight: 600, cursor: "pointer", borderRadius: 10 }}
               >Sin recurrencia</button>
               <div style={{ height: 1, background: "#1e2333", margin: "4px 6px" }} />
-              {DAYS_ES.map((day, i) => (
+              {DAYS_ES_PLURAL.map((day, i) => (
                 <button key={i} onClick={() => { setRecurrenceDay(i); setRecurrenceOpen(false); }}
                   style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", textAlign: "left", background: recurrenceDay === i ? "#5a9ea815" : "transparent", border: "none", color: recurrenceDay === i ? "#5a9ea8" : "#9a9590", padding: "5px 10px", fontSize: 13, fontWeight: 600, cursor: "pointer", borderRadius: 10, transition: "background 0.1s" }}
                   onMouseEnter={(e) => { if (recurrenceDay !== i) e.currentTarget.style.background = "#1e233380"; }}
@@ -668,7 +676,7 @@ function FocusMode({ task, onUpdate, onExit, availableTags }) {
       <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
         {task.tags.map((t) => <TagBadge key={t} tagId={t} availableTags={availableTags} />)}
       </div>
-      <div style={{ color: "#ece8e3", fontSize: 28, fontWeight: 600, textAlign: "center", maxWidth: 600, lineHeight: 1.3, marginBottom: 32 }}>{task.title}</div>
+      <div style={{ color: "#ece8e3", fontSize: 28, fontWeight: 600, textAlign: "center", maxWidth: 800, width: "100%", lineHeight: 1.3, marginBottom: 32, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{task.title}</div>
       <div style={{ width: "100%", maxWidth: 400, marginBottom: 32 }}>
         {subtasks.map((sub) => (
           <div key={sub.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 0" }}
@@ -866,7 +874,7 @@ function CommandCenter() {
 
   return (
     <div style={{ background: "#161818", minHeight: "100vh" }}>
-    <div style={{ fontFamily: "'DM Sans', 'Segoe UI', sans-serif", color: "#e4e0db", padding: "32px 40px", maxWidth: 960, margin: "0 auto" }}>
+    <div style={{ fontFamily: "'DM Sans', 'Segoe UI', sans-serif", color: "#e4e0db", padding: "32px 40px", maxWidth: 1200, margin: "0 auto" }}>
 
       {/* Header */}
       <div style={{ marginBottom: 28 }}>
@@ -1097,7 +1105,7 @@ function CommandCenter() {
                   whiteSpace: "nowrap",
                   letterSpacing: 0.3,
                 }}>
-                  ↻ {DAYS_ES[task.recurrence.day]}s
+                  ↻ {DAYS_ES_PLURAL[task.recurrence.day]}
                 </div>
 
                 {/* Title */}

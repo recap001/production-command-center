@@ -24,7 +24,7 @@ const SUPABASE_URL = "https://hbqgdqdwgiluknlfhdws.supabase.co";
 const SUPABASE_KEY = "sb_publishable_WfLWUcjmNRVkBdWHHla_Ig__BbmQnRm";
 
 // ---- PIN config — cámbialo por el que quieras ----
-const APP_PIN = "4665";
+const APP_PIN = "1234";
 
 const sbFetch = async (path, options = {}) => {
   const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
@@ -145,6 +145,19 @@ const STATE_COLORS = {
 
 const generateId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 
+function deadlineInfo(dateStr) {
+  if (!dateStr) return null;
+  const today = new Date(); today.setHours(0,0,0,0);
+  const d = new Date(dateStr + "T00:00:00");
+  const diff = Math.round((d - today) / 86400000);
+  if (diff < 0)  return { label: "vencida", color: "#c47048", bg: "#c4704818" };
+  if (diff === 0) return { label: "hoy",    color: "#d4a84a", bg: "#d4a84a18" };
+  if (diff <= 3)  return { label: diff + "d", color: "#d4a84a", bg: "#d4a84a10" };
+  if (diff <= 7)  return { label: diff + "d", color: "#6a7a6a", bg: "#6a7a6a10" };
+  const opts = { day: "numeric", month: "short" };
+  return { label: d.toLocaleDateString("es-ES", opts), color: "#4a4744", bg: "#2c2e2e20" };
+}
+
 const DAYS_ES = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"];
 const DAYS_ES_PLURAL = ["Domingos", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábados"];
 const DAYS_EN = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
@@ -235,6 +248,8 @@ function TaskCard({ task, onUpdate, onDelete, onSetActive, isActive, dragHandleP
   const [tagsOpen, setTagsOpen] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [newSub, setNewSub] = useState("");
+  const [deadlineEditing, setDeadlineEditing] = useState(false);
+  const deadlineInputRef = useRef(null);
   const dropdownRef = useRef(null);
   const tagDropdownRef = useRef(null);
   const subInputRef = useRef(null);
@@ -346,6 +361,26 @@ function TaskCard({ task, onUpdate, onDelete, onSetActive, isActive, dragHandleP
           </div>
         )}
 
+        {task.state !== "DONE" && (() => {
+          const dl = deadlineInfo(task.deadline);
+          return deadlineEditing ? (
+            <input ref={deadlineInputRef} type="date" defaultValue={task.deadline || ""}
+              autoFocus
+              onBlur={(e) => { onUpdate({ ...task, deadline: e.target.value || null }); setDeadlineEditing(false); }}
+              onKeyDown={(e) => { if (e.key === "Enter") e.target.blur(); if (e.key === "Escape") setDeadlineEditing(false); }}
+              style={{ background: "#161818", border: "1px solid #2a3050", borderRadius: 10, color: "#e4e0db", padding: "2px 8px", fontSize: 12, fontFamily: "inherit", outline: "none", width: 130, flexShrink: 0, colorScheme: "dark" }}
+            />
+          ) : (
+            <button onClick={() => setDeadlineEditing(true)}
+              title={task.deadline ? "Cambiar deadline" : "Añadir deadline"}
+              style={{ background: dl ? dl.bg : "transparent", border: "1px solid " + (dl ? dl.color + "40" : "#2c2e2e"), color: dl ? dl.color : "#3a3c3c", borderRadius: 10, padding: "2px 8px", fontSize: 12, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap", flexShrink: 0, transition: "all 0.15s", display: "flex", alignItems: "center", gap: 4 }}
+              onMouseEnter={(e) => { if (!dl) { e.currentTarget.style.borderColor = "#4a4744"; e.currentTarget.style.color = "#6a6562"; }}}
+              onMouseLeave={(e) => { if (!dl) { e.currentTarget.style.borderColor = "#2c2e2e"; e.currentTarget.style.color = "#3a3c3c"; }}}
+            >
+              {dl ? React.createElement(React.Fragment, null, React.createElement("span", {style:{fontSize:10}}, "⏱"), " ", dl.label) : React.createElement("span", {style:{fontSize:11,letterSpacing:0.3}}, "fecha")}
+            </button>
+          );
+        })()}
         <div ref={dropdownRef} style={{ position: "relative", flexShrink: 0, width: 95 }}>
           <button onClick={() => setStateOpen(!stateOpen)}
             style={{ background: `${STATE_COLORS[task.state]}12`, border: `1px solid ${STATE_COLORS[task.state]}30`, color: STATE_COLORS[task.state], borderRadius: 10, padding: "3px 8px", fontSize: 12, fontWeight: 700, cursor: "pointer", letterSpacing: 0.5, transition: "all 0.15s", whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 4, width: "100%", justifyContent: "space-between" }}
@@ -479,6 +514,7 @@ function NewTaskForm({ onAdd, availableTags }) {
   const [subtasks, setSubtasks] = useState([]);
   const [newSub, setNewSub] = useState("");
   const [recurrenceDay, setRecurrenceDay] = useState(null); // null = no recurrence, 0-6 = day of week
+  const [deadline, setDeadline] = useState("");
   const [recurrenceOpen, setRecurrenceOpen] = useState(false);
   const recurrenceRef = useRef(null);
   const inputRef = useRef(null);
@@ -489,7 +525,7 @@ function NewTaskForm({ onAdd, availableTags }) {
     if (!open) return;
     const handler = (e) => {
       if (formRef.current && !formRef.current.contains(e.target)) {
-        setOpen(false); setTitle(""); setTags([]); setSubtasks([]); setNewSub(""); setRecurrenceDay(null);
+        setOpen(false); setTitle(""); setTags([]); setSubtasks([]); setNewSub(""); setRecurrenceDay(null); setDeadline("");
       }
     };
     document.addEventListener("mousedown", handler);
@@ -507,8 +543,9 @@ function NewTaskForm({ onAdd, availableTags }) {
     if (!title.trim()) return;
     const base = { id: generateId(), title: title.trim(), tags, subtasks, state: "TODO", createdAt: Date.now(), order: Date.now() };
     if (recurrenceDay !== null) base.recurrence = { day: recurrenceDay };
+    if (deadline) base.deadline = deadline;
     onAdd(base);
-    setTitle(""); setTags([]); setSubtasks([]); setNewSub(""); setRecurrenceDay(null);
+    setTitle(""); setTags([]); setSubtasks([]); setNewSub(""); setRecurrenceDay(null); setDeadline("");
     inputRef.current?.focus();
   };
 
@@ -543,6 +580,13 @@ function NewTaskForm({ onAdd, availableTags }) {
           >{tag.label}</button>
         ))}
 
+        {/* Deadline picker */}
+        <div style={{ position: "relative", display: "flex", alignItems: "center", gap: 4 }}>
+          <span style={{ color: "#4a4744", fontSize: 11 }}>⏱</span>
+          <input type="date" value={deadline} onChange={(e) => setDeadline(e.target.value)}
+            style={{ background: deadline ? "#c8a05012" : "transparent", border: "1px solid " + (deadline ? "#c8a05040" : "#2c2e2e"), color: deadline ? "#c8a050" : "#4a4744", borderRadius: 10, padding: "3px 8px", fontSize: 12, fontFamily: "inherit", outline: "none", cursor: "pointer", colorScheme: "dark" }}
+          />
+        </div>
         {/* Recurrence picker */}
         <div ref={recurrenceRef} style={{ position: "relative", marginLeft: "auto" }}>
           <button onClick={() => setRecurrenceOpen(!recurrenceOpen)}
@@ -825,12 +869,11 @@ function CommandCenter() {
   const [loading, setLoading] = useState(true);
   const [syncStatus, setSyncStatus] = useState("idle");
   const [activeTaskId, setActiveTaskId] = useState(null);
-  const [filterTag, setFilterTag] = useState(null);
   const [filterState, setFilterState] = useState(null);
   const [showDone, setShowDone] = useState(false);
   const [focusMode, setFocusMode] = useState(false);
   const [viewMode, setViewMode] = useState("sprint");
-  const [projectIncludeBacklog, setProjectIncludeBacklog] = useState(false);
+  const [groupByProject, setGroupByProject] = useState(false);
   const [checklistItems, setChecklistItems] = useState([]);
   const [newCheckItem, setNewCheckItem] = useState("");
   const checkInputRef = React.useRef(null);
@@ -979,12 +1022,7 @@ function CommandCenter() {
   const sprintTasks = tasks.filter((t) => !t.recurrence || t.recurrenceParentId).filter(t => !t.bucket || t.bucket === "sprint");
   const backlogTasks = tasks.filter((t) => !t.recurrence || t.recurrenceParentId).filter(t => t.bucket === "backlog");
 
-  const filteredTasks = (viewMode === "backlog" ? backlogTasks : sprintTasks).filter((t) => {
-    if (!showDone && t.state === "DONE") return false;
-    if (filterTag && !t.tags.includes(filterTag)) return false;
-    if (filterState && t.state !== filterState) return false;
-    return true;
-  });
+
 
   const counts = {
     total: tasks.filter(t => t.state !== "DONE").length,
@@ -1067,7 +1105,7 @@ function CommandCenter() {
 
       {/* View tabs + state filters */}
       <div style={{ display: "flex", alignItems: "center", marginBottom: 20, borderBottom: "1px solid #1e2333" }}>
-        {[{ id: "sprint", label: "Sprint" }, { id: "backlog", label: "Backlog" }, { id: "project", label: "Project" }, { id: "recurrentes", label: "Recurrentes" }, { id: "tools", label: "Tools" }].map((v) => (
+        {[{ id: "sprint", label: "Sprint" }, { id: "backlog", label: "Backlog" }, { id: "recurrentes", label: "Recurrentes" }, { id: "tools", label: "Tools" }].map((v) => (
           <button key={v.id} onClick={() => setViewMode(v.id)}
             style={{ background: "transparent", border: "none", borderBottom: viewMode === v.id ? "2px solid #f59e0b" : "2px solid transparent", color: viewMode === v.id ? "#ece8e3" : "#6a6562", padding: "8px 16px", fontSize: 14, fontWeight: 700, cursor: "pointer", letterSpacing: 0.3, transition: "all 0.15s", marginBottom: -1 }}
             onMouseEnter={(e) => { if (viewMode !== v.id) e.currentTarget.style.color = "#9a9590"; }}
@@ -1075,6 +1113,14 @@ function CommandCenter() {
           >{v.label}</button>
         ))}
         <div style={{ flex: 1 }} />
+        {(viewMode === "sprint" || viewMode === "backlog") && (
+          <button onClick={() => setGroupByProject(g => !g)}
+            title={groupByProject ? "Vista plana" : "Agrupar por proyecto"}
+            style={{ background: groupByProject ? "#5a9ea815" : "transparent", border: "none", borderBottom: groupByProject ? "2px solid #5a9ea8" : "2px solid transparent", color: groupByProject ? "#5a9ea8" : "#4a4744", padding: "8px 12px", fontSize: 13, fontWeight: 700, cursor: "pointer", letterSpacing: 0.3, transition: "all 0.15s", marginBottom: -1, display: "flex", alignItems: "center", gap: 5 }}
+            onMouseEnter={(e) => { if (!groupByProject) e.currentTarget.style.color = "#9a9590"; }}
+            onMouseLeave={(e) => { if (!groupByProject) e.currentTarget.style.color = "#4a4744"; }}
+          ><span style={{ fontSize: 11 }}>⊞</span> proyectos</button>
+        )}
         <div style={{ display: "flex", gap: 6, marginBottom: -1 }}>
           {[
             { label: "todo", count: counts.todo, color: STATE_COLORS.TODO, state: "TODO" },
@@ -1096,129 +1142,98 @@ function CommandCenter() {
         </div>
       </div>
 
-      {/* Tag filters */}
-      {(viewMode === "sprint" || viewMode === "backlog") && (
-        <div style={{ display: "flex", gap: 6, marginBottom: 20, flexWrap: "wrap" }}>
-          <button onClick={() => setFilterTag(null)}
-            style={{ background: filterTag === null ? "#2c2e2e" : "transparent", border: `1px solid ${filterTag === null ? "#3a3c3c" : "#2c2e2e"}`, color: filterTag === null ? "#e4e0db" : "#6a6562", borderRadius: 10, padding: "3px 10px", fontSize: 13, fontWeight: 600, cursor: "pointer", transition: "all 0.15s" }}
-          >Todos</button>
-          {availableTags.map((tag) => (
-            <button key={tag.id} onClick={() => setFilterTag(filterTag === tag.id ? null : tag.id)}
-              style={{ background: filterTag === tag.id ? tag.bg : "transparent", border: `1px solid ${filterTag === tag.id ? tag.color + "40" : "#2c2e2e"}`, color: filterTag === tag.id ? tag.color : "#6a6562", borderRadius: 10, padding: "3px 10px", fontSize: 13, fontWeight: 600, cursor: "pointer", transition: "all 0.15s" }}
-            >{tag.label}</button>
-          ))}
-        </div>
-      )}
+
 
       {/* SPRINT + BACKLOG VIEWS */}
-      {(viewMode === "sprint" || viewMode === "backlog") && (
-        <>
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {filteredTasks.length === 0 && (
+      {(viewMode === "sprint" || viewMode === "backlog") && (() => {
+        const isBacklog = viewMode === "backlog";
+        const bucketTasks = (isBacklog ? backlogTasks : sprintTasks)
+          .filter(t => !t.recurrence || t.recurrenceParentId)
+          .filter(t => showDone || t.state !== "DONE")
+          .filter(t => !filterState || t.state === filterState);
+
+        if (!groupByProject) return (
+          <>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {bucketTasks.length === 0 && (
+                <div style={{ color: "#4a4744", fontSize: 15, textAlign: "center", padding: 40 }}>
+                  {tasks.length === 0 ? "Añade tu primera tarea para empezar" : "No hay tareas con estos filtros"}
+                </div>
+              )}
+              {bucketTasks.map((task, idx) => (
+                <div key={task.id} onDragOver={(e) => handleDragOver(e, task.id)} style={{ opacity: dragOverId === task.id ? 0.5 : 1, transition: "opacity 0.15s" }}>
+                  <TaskCard task={task} index={idx + 1} onUpdate={updateTask} onDelete={deleteTask} onSetActive={setActiveTaskId} isActive={task.id === activeTaskId} availableTags={availableTags}
+                    onMoveUp={tasks.indexOf(task) > 0 ? () => moveTask(task.id, -1) : null}
+                    onMoveDown={tasks.indexOf(task) < tasks.length - 1 ? () => moveTask(task.id, 1) : null}
+                    dragHandleProps={{ draggable: true, onDragStart: () => handleDragStart(task.id), onDragEnd: handleDragEnd }}
+                    onMoveToBucket={moveToBucket}
+                  />
+                </div>
+              ))}
+            </div>
+            <div style={{ marginTop: 8 }}>
+              <NewTaskForm onAdd={(t) => addTask(t, isBacklog ? "backlog" : "sprint")} availableTags={availableTags} />
+            </div>
+          </>
+        );
+
+        const renderGroup = (tag, groupTasks) => {
+          const wipCount    = groupTasks.filter(t => t.state === "WIP").length;
+          const todoCount   = groupTasks.filter(t => t.state === "TODO").length;
+          const standbyCount = groupTasks.filter(t => t.state === "STANDBY").length;
+          const doneCount   = groupTasks.filter(t => t.state === "DONE").length;
+          const color   = tag ? tag.color : "#4a4744";
+          const label   = tag ? tag.label : "Sin proyecto";
+          return (
+            <div key={tag ? tag.id : "untagged"}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10, paddingBottom: 8, borderBottom: `1px solid ${color}20` }}>
+                <div style={{ width: 3, height: 16, borderRadius: 2, background: color, flexShrink: 0 }} />
+                <div style={{ color: tag ? color : "#6a6562", fontSize: 15, fontWeight: 700 }}>{label}</div>
+                <div style={{ display: "flex", gap: 8, marginLeft: 4 }}>
+                  {wipCount > 0     && <span style={{ color: STATE_COLORS.WIP,     fontSize: 12, fontWeight: 600 }}>{wipCount} wip</span>}
+                  {todoCount > 0    && <span style={{ color: STATE_COLORS.TODO,    fontSize: 12, fontWeight: 600 }}>{todoCount} todo</span>}
+                  {standbyCount > 0 && <span style={{ color: STATE_COLORS.STANDBY, fontSize: 12, fontWeight: 600 }}>{standbyCount} stand by</span>}
+                  {doneCount > 0    && <span style={{ color: STATE_COLORS.DONE,    fontSize: 12, fontWeight: 600 }}>{doneCount} done</span>}
+                </div>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {groupTasks.length === 0
+                  ? <div style={{ color: "#2c2e2e", fontSize: 14, padding: "8px 0", fontStyle: "italic" }}>Sin tareas</div>
+                  : groupTasks.map((task, idx) => (
+                      <TaskCard key={task.id} task={task} index={idx + 1}
+                        onUpdate={updateTask} onDelete={deleteTask}
+                        onSetActive={setActiveTaskId} isActive={task.id === activeTaskId}
+                        availableTags={availableTags}
+                        dragHandleProps={{ style: { display: "none" } }}
+                        onMoveToBucket={moveToBucket}
+                      />
+                    ))
+                }
+              </div>
+            </div>
+          );
+        };
+
+        const untagged = bucketTasks.filter(t => t.tags.length === 0);
+        const allEmpty = availableTags.every(tag => bucketTasks.filter(t => t.tags.includes(tag.id)).length === 0) && untagged.length === 0;
+
+        return (
+          <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+            {allEmpty && (
               <div style={{ color: "#4a4744", fontSize: 15, textAlign: "center", padding: 40 }}>
                 {tasks.length === 0 ? "Añade tu primera tarea para empezar" : "No hay tareas con estos filtros"}
               </div>
             )}
-            {filteredTasks.map((task, idx) => (
-              <div key={task.id} onDragOver={(e) => handleDragOver(e, task.id)} style={{ opacity: dragOverId === task.id ? 0.5 : 1, transition: "opacity 0.15s" }}>
-                <TaskCard task={task} index={idx + 1} onUpdate={updateTask} onDelete={deleteTask} onSetActive={setActiveTaskId} isActive={task.id === activeTaskId} availableTags={availableTags}
-                  onMoveUp={tasks.indexOf(task) > 0 ? () => moveTask(task.id, -1) : null}
-                  onMoveDown={tasks.indexOf(task) < tasks.length - 1 ? () => moveTask(task.id, 1) : null}
-                  dragHandleProps={{ draggable: true, onDragStart: () => handleDragStart(task.id), onDragEnd: handleDragEnd }}
-                  onMoveToBucket={moveToBucket}
-                />
-              </div>
-            ))}
+            {availableTags.map(tag => renderGroup(tag, bucketTasks.filter(t => t.tags.includes(tag.id))))}
+            {untagged.length > 0 && renderGroup(null, untagged)}
+            <div style={{ marginTop: -8 }}>
+              <NewTaskForm onAdd={(t) => addTask(t, isBacklog ? "backlog" : "sprint")} availableTags={availableTags} />
+            </div>
           </div>
-          <div style={{ marginTop: 8 }}>
-            <NewTaskForm onAdd={(t) => addTask(t, viewMode === "backlog" ? "backlog" : "sprint")} availableTags={availableTags} />
-          </div>
-        </>
-      )}
+        );
+      })()}
 
-      {/* PROJECT VIEW */}
-      {viewMode === "project" && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
-          {/* Toggle */}
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: -8 }}>
-            <button onClick={() => setProjectIncludeBacklog(p => !p)}
-              style={{ display: "flex", alignItems: "center", gap: 8, background: "transparent", border: "none", cursor: "pointer", padding: 0 }}
-            >
-              <div style={{ width: 32, height: 18, borderRadius: 9, background: projectIncludeBacklog ? "#5a9ea840" : "#2c2e2e", border: `1px solid ${projectIncludeBacklog ? "#5a9ea8" : "#3a3c3c"}`, position: "relative", transition: "all 0.2s", flexShrink: 0 }}>
-                <div style={{ position: "absolute", top: 2, left: projectIncludeBacklog ? 14 : 2, width: 12, height: 12, borderRadius: "50%", background: projectIncludeBacklog ? "#5a9ea8" : "#4a4744", transition: "all 0.2s" }} />
-              </div>
-              <span style={{ color: projectIncludeBacklog ? "#5a9ea8" : "#4a4744", fontSize: 13, fontWeight: 600, transition: "color 0.2s" }}>Include Backlog tasks</span>
-            </button>
-          </div>
-          {availableTags.map((tag) => {
-            const projectTasks = tasks.filter((t) => t.tags.includes(tag.id))
-              .filter((t) => !t.recurrence || t.recurrenceParentId)
-              .filter((t) => projectIncludeBacklog ? true : (!t.bucket || t.bucket === "sprint"))
-              .filter((t) => {
-              if (!showDone && t.state === "DONE") return false;
-              if (filterState && t.state !== filterState) return false;
-              return true;
-            });
-            const wipCount = projectTasks.filter((t) => t.state === "WIP").length;
-            const todoCount = projectTasks.filter((t) => t.state === "TODO").length;
-            const standbyCount = projectTasks.filter((t) => t.state === "STANDBY").length;
-            const doneCount = tasks.filter((t) => t.tags.includes(tag.id) && t.state === "DONE").length;
-            return (
-              <div key={tag.id}>
-                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10, paddingBottom: 8, borderBottom: `1px solid ${tag.color}20` }}>
-                  <div style={{ width: 3, height: 16, borderRadius: 2, background: tag.color, flexShrink: 0 }} />
-                  <div style={{ color: tag.color, fontSize: 15, fontWeight: 700 }}>{tag.label}</div>
-                  <div style={{ display: "flex", gap: 8, marginLeft: 4 }}>
-                    {wipCount > 0 && <span style={{ color: STATE_COLORS.WIP, fontSize: 12, fontWeight: 600 }}>{wipCount} wip</span>}
-                    {todoCount > 0 && <span style={{ color: STATE_COLORS.TODO, fontSize: 12, fontWeight: 600 }}>{todoCount} todo</span>}
-                    {standbyCount > 0 && <span style={{ color: STATE_COLORS.STANDBY, fontSize: 12, fontWeight: 600 }}>{standbyCount} stand by</span>}
-                    {doneCount > 0 && <span style={{ color: STATE_COLORS.DONE, fontSize: 12, fontWeight: 600 }}>{doneCount} done</span>}
-                  </div>
-                </div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                  {projectTasks.length === 0
-                    ? <div style={{ color: "#2c2e2e", fontSize: 14, padding: "8px 0", fontStyle: "italic" }}>Sin tareas</div>
-                    : (() => {
-                      const sorted = [...projectTasks].sort((a, b) => {
-                        const aBucket = a.bucket === "backlog" ? 1 : 0;
-                        const bBucket = b.bucket === "backlog" ? 1 : 0;
-                        return aBucket - bBucket;
-                      });
-                      return sorted.map((task, idx) => (
-                        <TaskCard key={task.id} task={task} index={idx + 1} onUpdate={updateTask} onDelete={deleteTask} onSetActive={setActiveTaskId} isActive={task.id === activeTaskId} availableTags={availableTags} dragHandleProps={{ style: { display: "none" } }} onMoveToBucket={moveToBucket} />
-                      ));
-                    })()
-                  }
-                </div>
-              </div>
-            );
-          })}
-          {(() => {
-            const untagged = tasks.filter((t) => t.tags.length === 0)
-              .filter((t) => !t.recurrence || t.recurrenceParentId)
-              .filter((t) => projectIncludeBacklog ? true : (!t.bucket || t.bucket === "sprint"))
-              .filter((t) => {
-              if (!showDone && t.state === "DONE") return false;
-              if (filterState && t.state !== filterState) return false;
-              return true;
-            });
-            if (untagged.length === 0) return null;
-            return (
-              <div>
-                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10, paddingBottom: 8, borderBottom: "1px solid #1e2333" }}>
-                  <div style={{ width: 3, height: 16, borderRadius: 2, background: "#4a4744", flexShrink: 0 }} />
-                  <div style={{ color: "#6a6562", fontSize: 15, fontWeight: 700 }}>Sin proyecto</div>
-                </div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                  {untagged.map((task, idx) => (
-                    <TaskCard key={task.id} task={task} index={idx + 1} onUpdate={updateTask} onDelete={deleteTask} onSetActive={setActiveTaskId} isActive={task.id === activeTaskId} availableTags={availableTags} dragHandleProps={{ style: { display: "none" } }} />
-                  ))}
-                </div>
-              </div>
-            );
-          })()}
-        </div>
-      )}
+
 
       {/* RECURRENTES VIEW */}
       {viewMode === "recurrentes" && (() => {
